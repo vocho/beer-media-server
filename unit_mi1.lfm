@@ -1,0 +1,37 @@
+object Form1: TForm1
+  Left = 246
+  Height = 496
+  Top = 150
+  Width = 582
+  Caption = 'MI'
+  ClientHeight = 496
+  ClientWidth = 582
+  Font.Height = -16
+  Font.Name = 'MS UI Gothic'
+  OnCreate = FormCreate
+  LCLVersion = '0.9.31'
+  object Memo1: TMemo
+    Left = 12
+    Height = 384
+    Top = 72
+    Width = 558
+    Anchors = [akTop, akLeft, akRight, akBottom]
+    Font.Height = -16
+    Font.Name = 'MS UI Gothic'
+    ParentFont = False
+    ReadOnly = True
+    ScrollBars = ssAutoBoth
+    TabOrder = 0
+  end
+  object Label1: TLabel
+    Left = 14
+    Height = 55
+    Top = 9
+    Width = 554
+    Anchors = [akTop, akLeft, akRight]
+    AutoSize = False
+    Caption = 'MI "ファイル名" として実行してください。'#13#10'（MI.exe にファイルをドラッグ＆ドロップでもOK）'
+    ParentColor = False
+    WordWrap = True
+  end
+end
