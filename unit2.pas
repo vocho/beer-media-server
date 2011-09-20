@@ -122,7 +122,10 @@ end;
 
 function TStringListUTF8.DoCompareText(const s1, s2: string): PtrInt;
 begin
-  Result:= CompareText(s1, s2);
+  if CaseSensitive then
+    Result:= CompareStr(s1,s2)
+  else
+    Result:= CompareText(s1,s2);
 end;
 
 procedure TStringListUTF8.LoadFromFile(const FileName: string);
@@ -506,6 +509,8 @@ var
 begin
   try
     if (fname = '') or not FileExistsUTF8(fname) then Exit;
+    s:= LowerCase(ExtractFileExt(fname));
+    if (s = '.lua') or (s = '.txt') or  (s = '.m3u') or  (s = '.m3u8') then Exit;
     try
       // 書き込み中のファイルかを調べるため、fmShareDenyWriteで開いてみる
       fs:= TFileStreamUTF8.Create(fname, fmOpenRead or fmShareDenyWrite);

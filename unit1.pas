@@ -134,11 +134,11 @@ type
   { TGetMediaInfo }
   TGetMediaInfo = class(TStringListUTF8)
   public
-    FileName, AccTime: string;
-    Locked: boolean;
+    FileName, AccTime, MimeType: string;
+    IsTemp: boolean;
     constructor Create(const fname: string; mi: Cardinal);
     destructor Destroy; override;
-    function GetMimeType(L: PLua_State; const scname: string): string;
+    function GetMimeType(L: PLua_State; const scname: string; get_new: boolean = False): string;
   end;
 
   { TMediaInfoCollector }
@@ -149,17 +149,19 @@ type
     mi_list, mi_ac_list: TStringListUTF8;
     MaxMediaInfo: integer;
   public
-    cs_list, cs_ac_list, cs_pr_list: TCriticalSection;
+    cs_list, cs_ac_list, cs_pr_list, cs_get_mi: TCriticalSection;
     PriorityList: TStringListUTF8;
     constructor Create;
     destructor Destroy; override;
     procedure Execute; override;
     function GetMediaInfo(const fname: string): TGetMediaInfo;
+    procedure ClearMediaInfo;
   end;
 
 var
   iniFile: TIniFile;
   ExecPath, TempPath, UUID, DAEMON_PORT: string;
+  MAX_REQUEST_COUNT: integer;
   MyApp: TMyApp;
   thHttpDaemon: THttpDaemon;
   thSSDPDAemon: TSSDPDaemon;
@@ -503,6 +505,8 @@ begin
   DAEMON_PORT:= iniFile.ReadString(INI_SEC_SYSTEM, 'HTTP_PORT', '5008');
   Log:= TStringListUTF8.Create;
 
+  MAX_REQUEST_COUNT:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'MAX_REQUEST_COUNT', 0);
+
   MediaDirs:= TStringListUTF8.Create;
   iniFile.ReadSectionValues('MediaDirs', MediaDirs);
   i:= 0;
@@ -533,6 +537,9 @@ begin
   mi:= TMenuItem.Create(nil);
   mi.Caption:= '&Show';
   mi.OnClick:= @OnMenuShowClick;
+  PopupMenu.Items.Add(mi);
+  mi:= TMenuItem.Create(nil);
+  mi.Caption:= '-';
   PopupMenu.Items.Add(mi);
   mi:= TMenuItem.Create(nil);
   mi.Caption:= '&Quit';
@@ -571,7 +578,7 @@ begin
   MediaDirs.Free;
   while PopupMenu.Items.Count > 0 do begin
     PopupMenu.Items[0].Free;
-    PopupMenu.Items.Delete(0);
+    //PopupMenu.Items.Delete(0);
   end;
   PopupMenu.Free;
   inherited Destroy;
@@ -1157,12 +1164,16 @@ function THttpThrd.DoGetTranscodeCommand(const fname: string): string;
   begin
     lua_pushstring(L, fname); // fname
     mi:= thMIC.GetMediaInfo(fname);
-    lua_newtable(L);             // minfo
-    for i:= 0 to mi.Count-1 do begin
-      MIValue2LuaTable(L, mi[i]);
+    try
+      lua_newtable(L);             // minfo
+      for i:= 0 to mi.Count-1 do begin
+        MIValue2LuaTable(L, mi[i]);
+      end;
+      lua_pushstring(L, ScriptFileName); // ScriptFileName
+      CallLua(L, 3, 1);
+    finally
+      if mi.IsTemp then mi.Free;
     end;
-    lua_pushstring(L, ScriptFileName); // ScriptFileName
-    CallLua(L, 3, 1);
   end;
 
 var
@@ -1218,8 +1229,10 @@ begin
 end;
 
 function THttpThrd.DoBrowse(docr, docw: TXMLDocument): boolean;
+var
+  si, rc: integer;
 
-  procedure GetFileList(const dir: string; sl: TStringListUTF8; dirOnly: boolean);
+  procedure GetFileList(const dir: string; sl: TStringListUTF8; dirOnly, getInfo: boolean);
   var
     info: TSearchRec;
     ini: TIniFile;
@@ -1229,6 +1242,7 @@ function THttpThrd.DoBrowse(docr, docw: TXMLDocument): boolean;
     mi: TGetMediaInfo;
     stream: TStringStream;
     b: boolean;
+    c: Integer;
   begin
     sl.Clear;
     if FileExistsUTF8(dir) then begin
@@ -1261,16 +1275,7 @@ function THttpThrd.DoBrowse(docr, docw: TXMLDocument): boolean;
                 if (s = '.m3u') or (s = '.m3u8') then begin
                   sl.Add(#3 + s2);
                 end else begin
-                  mi:= thMIC.GetMediaInfo(s2);
-                  if Assigned(mi) then begin
-                    s:= mi.GetMimeType(L_S, ScriptFileName);
-                    if s <> '' then begin
-                      if Pos(':::TRANS:::', s) > 0 then begin
-                        sl.Add(#4 + s2);
-                      end else
-                        sl.Add(#$FF + s2);
-                    end;
-                  end;
+                  sl.Add(#$FF + s2);
                 end;
               end;
             end;
@@ -1318,17 +1323,8 @@ function THttpThrd.DoBrowse(docr, docw: TXMLDocument): boolean;
                 s:= LowerCase(ExtractFileExt(info.Name));
                 if (s = '.m3u') or (s = '.m3u8') then begin
                   sl.Add(#3 + dir + info.Name);
-                end else begin
-                  mi:= thMIC.GetMediaInfo(dir + info.Name);
-                  if Assigned(mi) then begin
-                    s:= mi.GetMimeType(L_S, ScriptFileName);
-                    if s <> '' then begin
-                      if Pos(':::TRANS:::', s) > 0 then begin
-                        sl.Add(#4 + dir + info.Name);
-                      end else
-                        sl.Add(#$FF + dir + info.Name);
-                    end;
-                  end;
+                end else if (s <> '.lua') and (s <> '.txt') then begin
+                  sl.Add(#$FF + dir + info.Name);
                 end;
               end;
             end;
@@ -1337,12 +1333,38 @@ function THttpThrd.DoBrowse(docr, docw: TXMLDocument): boolean;
           FindCloseUTF8(Info);
         end;
     end;
+
+    if getInfo then begin
+      c:= sl.Count;
+      if c > rc then c:= rc;
+      if (MAX_REQUEST_COUNT > 0) and (c > MAX_REQUEST_COUNT) then c:= MAX_REQUEST_COUNT;
+      if si + c > sl.Count then c:= sl.Count - si;
+      for i:= si to si+c-1 do begin
+        if sl[i][1] = #$FF then begin
+          mi:= thMIC.GetMediaInfo(Copy(sl[i], 2, MaxInt));
+          try
+            if Pos(':::TRANS:::',
+             mi.GetMimeType(L_S, ScriptFileName, True)) > 0 then begin
+              if sl.Sorted then begin
+                s:= sl[i];
+                sl.Delete(i);
+                sl.Add(s + '?');
+              end else begin
+                sl[i]:= sl[i] + '?';
+              end;
+            end;
+          finally
+            if mi.IsTemp then mi.Free;
+          end;
+        end;
+      end;
+    end;
   end;
 
 var
   parent, item, val: TDOMNode;
   mlist: TStringListUTF8;
-  i, j, c, si, rc: integer;
+  i, j, c: integer;
   i64: int64;
   r, s, s1, fn, m, mt, id, param, cmd, dur: String;
   mi: TGetMediaInfo;
@@ -1409,21 +1431,22 @@ begin
       if s = '' then Exit;
       i:= StrToInt(Fetch(s, '$'));
       s1:= IncludeTrailingPathDelimiter(MediaDirs.ValueFromIndex[i]);
-      GetFileList(s1, mlist, s <> '');
+      GetFileList(s1, mlist, s <> '', s = '');
       while s <> '' do begin
         i:= StrToInt(Fetch(s, '$'));
         if i >= mlist.Count then begin
           // TRANSCODE ファイルもフォルダとして検索してみる
-          GetFileList(s1, mlist, False);
+          GetFileList(s1, mlist, False, False);
           if i >= mlist.Count then Break;
         end;
         s1:= Copy(mlist[i], 2, MaxInt);
-        GetFileList(s1, mlist, s <> '');
+        GetFileList(s1, mlist, s <> '', s = '');
       end;
     end;
 
     c:= mlist.Count;
     if c > rc then c:= rc;
+    if (MAX_REQUEST_COUNT > 0) and (c > MAX_REQUEST_COUNT) then c:= MAX_REQUEST_COUNT;
     if si + c > mlist.Count then c:= mlist.Count - si;
 
     r:= '<DIDL-Lite'+
@@ -1434,12 +1457,12 @@ begin
     for i:= si to si+c-1 do begin
       fn:= mlist[i];
       case fn[1] of
-        #1, #2, #3, #4: begin
+        #1, #2, #3: begin
           s:= Copy(fn, 2, MaxInt);
           if fn[1] <> #1 then
             s:= ExtractFileName(ExcludeTrailingPathDelimiter(s));
           s:= StringReplace(s, '&', '&amp;', [rfReplaceAll]);
-          if fn[1] <> #4 then s:= '&lt; ' + s + ' &gt;' else s:= '/ ' + s;
+          s:= '&lt; ' + s + ' &gt;';
           r:= r +
            '<container id="' + id + '$' + IntToStr(i) + '" childCount="0"' +
            ' parentID="' + id + '" restricted="true">' +
@@ -1447,6 +1470,7 @@ begin
            '<upnp:class>object.container.storageFolder</upnp:class>'+
            '</container>';
         end;
+
         #5: begin
           param:= Copy(fn, 2, MaxInt);
           cmd:= Fetch(param, #$09);
@@ -1454,124 +1478,147 @@ begin
           s1:= Fetch(fn, #$09);
           Fetch(fn, #$09);
           mi:= thMIC.GetMediaInfo(fn);
-          mt:= mi.GetMimeType(L_S, ScriptFileName);
-          mt:= Fetch(mt, ':::');
+          try
+            mt:= mi.GetMimeType(L_S, ScriptFileName);
+            mt:= Fetch(mt, ':::');
 
-          m:= ' protocolInfo="http-get:*:' + mt + '"';
+            m:= ' protocolInfo="http-get:*:' + mt + '"';
 
-          dur:= '';
-          if mi.Values['General;Format'] = 'ISO DVD' then begin
-            j:= Pos('dvd://', cmd);
-            if j > 0 then begin
-              s:= Copy(cmd, j+6, MaxInt);
-              s:= Fetch(s, ' ');
-              if s = '$_longest_$' then begin
-                s:= mi.Values['DVD;LONGEST'];
+            dur:= '';
+            if mi.Values['General;Format'] = 'ISO DVD' then begin
+              j:= Pos('dvd://', cmd);
+              if j > 0 then begin
+                s:= Copy(cmd, j+6, MaxInt);
+                s:= Fetch(s, ' ');
+                if s = '$_longest_$' then begin
+                  s:= mi.Values['DVD;LONGEST'];
+                end;
+                s:= mi.Values['DVD;LENGTH' + IntToStr(StrToInt(s))];
+                if s <> '' then dur:= SeekTimeNum2Str(SeekTimeStr2Num(s));
               end;
-              s:= mi.Values['DVD;LENGTH' + IntToStr(StrToInt(s))];
-              if s <> '' then dur:= SeekTimeNum2Str(SeekTimeStr2Num(s));
+            end else
+              dur:= mi.Values['General;Duration'];
+
+            if dur <> '' then
+              m:= m + ' duration="' + dur + '"';
+
+            r:= r +
+             '<item id="' + id + '$' + IntToStr(i) + '"' +
+             ' parentID="' + id + '" restricted="true">' +
+             '<dc:title>' + StringReplace(s1, '&', '&amp;', [rfReplaceAll]) + '</dc:title>' +
+             '<res xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/"'+
+             m + '>' +
+             'http://' +
+             Sock.ResolveName(Sock.LocalName) + ':' + DAEMON_PORT + '/playmedia2/' +
+             //EncodeTriplet(param, '%', URLSpecialChar + URLFullSpecialChar) +
+             EncodeX(param) +
+             '</res>';
+
+            s:= mi.Values['General;File_Created_Date_Local'];
+            if s <> '' then begin
+              r:= r + '<dc:date>' + Fetch(s, ' ') + 'T' + Copy(s, 1, 8) + '</dc:date>';
+            end else
+              r:= r + '<dc:date>0000-00-00T00:00:00</dc:date>';
+
+            s:= mt;
+            s:= Fetch(s, '/');
+            if s = 'audio' then begin
+              r:= r + '<upnp:class>object.item.audioItem.musicTrack</upnp:class>';
+            end else if s = 'image' then begin
+              r:= r + '<upnp:class>object.item.imageItem.photo</upnp:class>';
+            end else begin
+              r:= r + '<upnp:class>object.item.videoItem</upnp:class>';
             end;
-          end else
-            dur:= mi.Values['General;Duration'];
-
-          if dur <> '' then
-            m:= m + ' duration="' + dur + '"';
-
-          r:= r +
-           '<item id="' + id + '$' + IntToStr(i) + '"' +
-           ' parentID="' + id + '" restricted="true">' +
-           '<dc:title>' + StringReplace(s1, '&', '&amp;', [rfReplaceAll]) + '</dc:title>' +
-           '<res xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/"'+
-           m + '>' +
-           'http://' +
-           Sock.ResolveName(Sock.LocalName) + ':' + DAEMON_PORT + '/playmedia2/' +
-           //EncodeTriplet(param, '%', URLSpecialChar + URLFullSpecialChar) +
-           EncodeX(param) +
-           '</res>';
-
-          s:= mi.Values['General;File_Created_Date_Local'];
-          if s <> '' then begin
-            r:= r + '<dc:date>' + Fetch(s, ' ') + 'T' + Copy(s, 1, 8) + '</dc:date>';
-          end else
-            r:= r + '<dc:date>0000-00-00T00:00:00</dc:date>';
-
-          s:= mt;
-          s:= Fetch(s, '/');
-          if s = 'audio' then begin
-            r:= r + '<upnp:class>object.item.audioItem.musicTrack</upnp:class>';
-          end else if s = 'image' then begin
-            r:= r + '<upnp:class>object.item.imageItem.photo</upnp:class>';
-          end else begin
-            r:= r + '<upnp:class>object.item.videoItem</upnp:class>';
+            r:= r + '</item>';
+          finally
+            if mi.IsTemp then mi.Free;
           end;
-          r:= r + '</item>';
         end;
 
         else begin
           fn:= Copy(fn, 2, MaxInt);
-          mi:= thMIC.GetMediaInfo(fn);
-          mt:= mi.GetMimeType(L_S, ScriptFileName);
-          mt:= Fetch(mt, ':::');
-
-          m:= ' protocolInfo="http-get:*:' + mt + '"';
-
-          i64:= GetFileSize(fn);
-          if i64 > 0 then
-            m:= m + ' size="' + IntToStr(i64) + '"';
-
-          s:= mi.Values['General;Duration'];
-          if s <> '' then
-            m:= m + ' duration="' + s + '"';
-
-          s:= mi.Values['Video;Width'];
-          if s <> '' then
-            m:= m + ' resolution="' + s + 'x' + mi.Values['Video;Height'] + '"';
-
-          s:= mi.Values['Audio;Channels'];
-          if s <> '' then
-            m:= m + ' nrAudioChannels="' + s + '"';
-
-          s:= mi.Values['Audio;BitRate'];
-          if s <> '' then
-            m:= m + ' bitrate="' + s + '"';
-
-          s:= mi.Values['Audio;SamplingRate'];
-          if s <> '' then
-            m:= m + ' sampleFrequency="' + s + '"';
-
-          s:= ExtractFileName(fn);
-          s:= StringReplace(s, '&', '&amp;', [rfReplaceAll]);
-          if mi.Values['General;Format'] = 'NowRecording' then begin
-            s:= '* ' + s;
-          end;
-          r:= r +
-           '<item id="' + id + '$' + IntToStr(i) + '"' +
-           ' parentID="' + id + '" restricted="true">' +
-           '<dc:title>' + s + '</dc:title>' +
-           '<res xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/"'+
-           m + '>' +
-           'http://' +
-           Sock.ResolveName(Sock.LocalName) + ':' + DAEMON_PORT + '/playmedia/' +
-           //EncodeTriplet(fn, '%', URLSpecialChar + URLFullSpecialChar) +
-           EncodeX(fn) +
-           '</res>';
-
-          s:= mi.Values['General;File_Created_Date_Local'];
-          if s <> '' then begin
-            r:= r + '<dc:date>' + Fetch(s, ' ') + 'T' + Copy(s, 1, 8) + '</dc:date>';
-          end else
-            r:= r + '<dc:date>0000-00-00T00:00:00</dc:date>';
-
-          s:= mt;
-          s:= Fetch(s, '/');
-          if s = 'audio' then begin
-            r:= r + '<upnp:class>object.item.audioItem.musicTrack</upnp:class>';
-          end else if s = 'image' then begin
-            r:= r + '<upnp:class>object.item.imageItem.photo</upnp:class>';
+          if fn[Length(fn)] = '?' then begin
+            // TRANSCODE
+            s:= Copy(fn, 1, Length(fn)-1);
+            s:= ExtractFileName(ExcludeTrailingPathDelimiter(s));
+            s:= StringReplace(s, '&', '&amp;', [rfReplaceAll]);
+            s:= '/ ' + s;
+            r:= r +
+             '<container id="' + id + '$' + IntToStr(i) + '" childCount="0"' +
+             ' parentID="' + id + '" restricted="true">' +
+             '<dc:title>' + s + '</dc:title><dc:date>0000-00-00T00:00:00</dc:date>'+
+             '<upnp:class>object.container.storageFolder</upnp:class>'+
+             '</container>';
           end else begin
-            r:= r + '<upnp:class>object.item.videoItem</upnp:class>';
+
+            mi:= thMIC.GetMediaInfo(fn);
+            try
+              mt:= mi.GetMimeType(L_S, ScriptFileName);
+              mt:= Fetch(mt, ':::');
+
+              m:= ' protocolInfo="http-get:*:' + mt + '"';
+
+              i64:= GetFileSize(fn);
+              if i64 > 0 then
+                m:= m + ' size="' + IntToStr(i64) + '"';
+
+              s:= mi.Values['General;Duration'];
+              if s <> '' then
+                m:= m + ' duration="' + s + '"';
+
+              s:= mi.Values['Video;Width'];
+              if s <> '' then
+                m:= m + ' resolution="' + s + 'x' + mi.Values['Video;Height'] + '"';
+
+              s:= mi.Values['Audio;Channels'];
+              if s <> '' then
+                m:= m + ' nrAudioChannels="' + s + '"';
+
+              s:= mi.Values['Audio;BitRate'];
+              if s <> '' then
+                m:= m + ' bitrate="' + s + '"';
+
+              s:= mi.Values['Audio;SamplingRate'];
+              if s <> '' then
+                m:= m + ' sampleFrequency="' + s + '"';
+
+              s:= ExtractFileName(fn);
+              s:= StringReplace(s, '&', '&amp;', [rfReplaceAll]);
+              if mi.Values['General;Format'] = 'NowRecording' then begin
+                s:= '* ' + s;
+              end;
+              r:= r +
+               '<item id="' + id + '$' + IntToStr(i) + '"' +
+               ' parentID="' + id + '" restricted="true">' +
+               '<dc:title>' + s + '</dc:title>' +
+               '<res xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/"'+
+               m + '>' +
+               'http://' +
+               Sock.ResolveName(Sock.LocalName) + ':' + DAEMON_PORT + '/playmedia/' +
+               //EncodeTriplet(fn, '%', URLSpecialChar + URLFullSpecialChar) +
+               EncodeX(fn) +
+               '</res>';
+
+              s:= mi.Values['General;File_Created_Date_Local'];
+              if s <> '' then begin
+                r:= r + '<dc:date>' + Fetch(s, ' ') + 'T' + Copy(s, 1, 8) + '</dc:date>';
+              end else
+                r:= r + '<dc:date>0000-00-00T00:00:00</dc:date>';
+
+              s:= mt;
+              s:= Fetch(s, '/');
+              if s = 'audio' then begin
+                r:= r + '<upnp:class>object.item.audioItem.musicTrack</upnp:class>';
+              end else if s = 'image' then begin
+                r:= r + '<upnp:class>object.item.imageItem.photo</upnp:class>';
+              end else begin
+                r:= r + '<upnp:class>object.item.videoItem</upnp:class>';
+              end;
+              r:= r + '</item>';
+            finally
+              if mi.IsTemp then mi.Free;
+            end;
           end;
-          r:= r + '</item>';
         end;
       end;
     end;
@@ -1640,8 +1687,8 @@ var
 begin
   Result:= False;
   h:= TStringListUTF8.Create;
+  mi:= thMIC.GetMediaInfo(fname);
   try
-    mi:= thMIC.GetMediaInfo(fname);
     cf:= mi.GetMimeType(L_S, ScriptFileName);
     ct:= Fetch(cf, ':');
     cf:= Fetch(cf, ':::');
@@ -1806,6 +1853,7 @@ begin
     end;
   finally
     h.Free;
+    if mi.IsTemp then mi.Free;
   end;
 end;
 
@@ -1824,6 +1872,7 @@ var
 begin
   Result:= False;
   h:= TStringListUTF8.Create;
+  mi:= thMIC.GetMediaInfo(fname);
   try
     sl:= TStringListUTF8.Create;
     try
@@ -1842,7 +1891,6 @@ begin
       sl.Free;
     end;
 
-    mi:= thMIC.GetMediaInfo(fname);
     cf:= mi.GetMimeType(L_S, ScriptFileName);
     ct:= Fetch(cf, ':');
     cf:= Fetch(cf, ':::');
@@ -2046,6 +2094,7 @@ begin
     end;
   finally
     h.Free;
+    if mi.IsTemp then mi.Free;
   end;
 end;
 
@@ -2164,6 +2213,7 @@ begin
   InitCriticalSection(CS_list);
   InitCriticalSection(CS_ac_list);
   InitCriticalSection(CS_pr_list);
+  InitCriticalSection(CS_get_mi);
   inherited Create(False);
 end;
 
@@ -2178,21 +2228,22 @@ begin
   DoneCriticalSection(CS_list);
   DoneCriticalSection(CS_ac_list);
   DoneCriticalSection(CS_pr_list);
+  DoneCriticalSection(CS_get_mi);
   inherited Destroy;
 end;
 
 procedure TMediaInfoCollector.Execute;
 
-  procedure GetFileList(const dir: string; depth: integer; over_ok:boolean = False);
+  procedure GetFileList(const dir: string; depth: integer; prior:boolean = False);
   var
     info: TSearchRec;
     mi: TGetMediaInfo;
   begin
-    if not over_ok and (mi_list.Count >= MAXMEDIAINFO) then Exit;
+    if not prior and (mi_list.Count >= MAXMEDIAINFO) then Exit;
     if FindFirstUTF8(dir+'*', faAnyFile, info) = 0 then
       try
         repeat
-          if Terminated or (PriorityList.Count > 0) then Break;
+          if Terminated or (not prior and (PriorityList.Count > 0)) then Break;
           if (info.Name <> '.') and (info.Name <> '..') then begin
             if info.Attr and faDirectory <> 0 then begin
               if depth > 0 then begin
@@ -2201,7 +2252,12 @@ procedure TMediaInfoCollector.Execute;
               end;
             end else begin
               if mi_list.IndexOf(dir + info.Name) < 0 then begin
-                mi:= TGetMediaInfo.Create(dir + info.Name, miHandle);
+                EnterCriticalSection(CS_get_mi);
+                try
+                  mi:= TGetMediaInfo.Create(dir + info.Name, miHandle);
+                finally
+                  LeaveCriticalSection(CS_get_mi);
+                end;
                 if mi.Count > 0 then begin
                   EnterCriticalSection(CS_list);
                   try
@@ -2216,7 +2272,7 @@ procedure TMediaInfoCollector.Execute;
                   finally
                     LeaveCriticalSection(CS_list);
                   end;
-                  if not over_ok and (mi_list.Count >= MAXMEDIAINFO) then Break;
+                  if not prior and (mi_list.Count >= MAXMEDIAINFO) then Break;
                 end else
                   mi.Free;
               end;
@@ -2229,49 +2285,15 @@ procedure TMediaInfoCollector.Execute;
   end;
 
 var
-  depth, i, j: Integer;
-  s: string;
-  mi: TGetMediaInfo;
-  PriorityDirName: string;
+  depth, i: Integer;
 begin
-  PriorityDirName:= '';
   while not Terminated do begin
     miHandle:= MediaInfo_New;
     try
-      if PriorityList.Count > 0 then begin
+      while not Terminated and (PriorityList.Count > 0) do begin
         try
-          i:= mi_list.IndexOf(PriorityList[0]);
-          if i < 0 then begin
-            mi:= TGetMediaInfo.Create(PriorityList[0], miHandle);
-            EnterCriticalSection(CS_list);
-            try
-              mi.Locked:= True;
-              mi_list.AddObject(PriorityList[0], mi);
-            finally
-              LeaveCriticalSection(CS_list);
-            end;
-          end else begin
-            mi:= TGetMediaInfo(mi_list.Objects[i]);
-            if not mi.Locked then begin
-              EnterCriticalSection(CS_list);
-              try
-                mi.Locked:= True;
-                if (mi.Count = 0) or
-                 (mi.Values['General;Format'] = 'NowRecording') then begin
-                  s:= mi.AccTime;
-                  mi.Free;
-                  mi:= TGetMediaInfo.Create(PriorityList[0], miHandle);
-                  mi.AccTime:= s;
-                  mi_list.Objects[i]:= mi;
-                end;
-              finally
-                LeaveCriticalSection(CS_list);
-              end;
-            end;
-          end;
-
-          PriorityDirName:=
-           IncludeTrailingPathDelimiter(ExtractFilePath(PriorityList[0]));
+          if PriorityList[0] <> '' then
+            GetFileList(PriorityList[0], 0, True);
         finally
           EnterCriticalSection(CS_pr_list);
           try
@@ -2280,11 +2302,6 @@ begin
             LeaveCriticalSection(CS_pr_list);
           end;
         end;
-      end;
-
-      if PriorityDirName <> '' then begin
-        GetFileList(PriorityDirName, 0, True);
-        PriorityDirName:= '';
       end;
 
       // 浅い階層の分を先に収集
@@ -2304,25 +2321,18 @@ begin
     end;
 
     // 古い情報を削除
-    i:= 0;
-    while not Terminated and
-     (mi_list.Count > MAXMEDIAINFO) and (i < mi_list.Count) do begin
+    while not Terminated and (mi_list.Count > MAXMEDIAINFO) do begin
       EnterCriticalSection(CS_list);
       try
-        j:= mi_list.IndexOf(Copy(mi_ac_list[i], 13, MaxInt));
-        mi:= TGetMediaInfo(mi_list.Objects[j]);
-        if mi.Locked then begin
-          Inc(i);
-          Continue;
-        end;
-        mi.Free;
-        mi_list.Delete(j);
+        i:= mi_list.IndexOf(Copy(mi_ac_list[0], 13, MaxInt));
+        mi_list.Objects[i].Free;
+        mi_list.Delete(i);
       finally
         LeaveCriticalSection(CS_list);
       end;
       EnterCriticalSection(CS_ac_list);
       try
-        mi_ac_list.Delete(i);
+        mi_ac_list.Delete(0);
       finally
         LeaveCriticalSection(CS_ac_list);
       end;
@@ -2336,7 +2346,7 @@ end;
 // 注：他のスレッドからしか呼ばれることはないメソッド
 function TMediaInfoCollector.GetMediaInfo(const fname: string): TGetMediaInfo;
 var
-  i: Integer;
+  i, mi: Integer;
 begin
   Result:= nil;
 
@@ -2345,60 +2355,71 @@ begin
     i:= mi_list.IndexOf(fname);
     if i >= 0 then begin
       Result:= TGetMediaInfo(mi_list.Objects[i]);
-      Result.Locked:= True;
+      if Assigned(Result) and (Result.Count > 0) and
+       (Result.Values['General;Format'] <> 'NowRecording') then begin
+        EnterCriticalSection(CS_ac_list);
+        try
+          i:= mi_ac_list.IndexOf(Result.AccTime+fname);
+          if i >= 0 then mi_ac_list.Delete(i);
+          Result.AccTime:= FormatDateTime('yymmddhhnnss', Now);
+          mi_ac_list.Add(Result.AccTime + fname);
+        finally
+          LeaveCriticalSection(CS_ac_list);
+        end;
+        Exit;
+      end;
     end;
   finally
     LeaveCriticalSection(CS_list);
   end;
 
-  if not Assigned(Result) or (Result.Count = 0) or
-   (Result.Values['General;Format'] = 'NowRecording') then begin
-    if Assigned(Result) then begin
-      EnterCriticalSection(CS_list);
-      try
-        Result.Locked:= False;
-      finally
-        LeaveCriticalSection(CS_list);
-      end;
+  mi:= MediaInfo_New;
+  try
+    EnterCriticalSection(CS_get_mi);
+    try
+      Result:= TGetMediaInfo.Create(fname, mi);
+    finally
+      LeaveCriticalSection(CS_get_mi);
     end;
+    Result.IsTemp:= True;
     EnterCriticalSection(CS_pr_list);
     try
-      PriorityList.Add(fname);
+      PriorityList.Add(IncludeTrailingPathDelimiter(ExtractFilePath(fname)));
     finally
       LeaveCriticalSection(CS_pr_list);
     end;
     Suspended:= False;
-    while True do begin
-      EnterCriticalSection(CS_list);
-      try
-        i:= mi_list.IndexOf(fname);
-        if i >= 0 then begin
-          Result:= TGetMediaInfo(mi_list.Objects[i]);
-          Break;
-        end;
-      finally
-        LeaveCriticalSection(CS_list);
-      end;
-      Sleep(10);
-    end;
+  finally
+    MediaInfo_Delete(mi);
+  end;
+end;
+
+procedure TMediaInfoCollector.ClearMediaInfo;
+var
+  i: Integer;
+begin
+  EnterCriticalSection(CS_list);
+  try
+    for i:= 0 to mi_list.Count-1 do mi_list.Objects[i].Free;
+    mi_list.Clear;
+  finally
+    LeaveCriticalSection(CS_list);
   end;
 
   EnterCriticalSection(CS_ac_list);
   try
-    i:= mi_ac_list.IndexOf(Result.AccTime+fname);
-    if i >= 0 then mi_ac_list.Delete(i);
-    Result.AccTime:= FormatDateTime('yymmddhhnnss', Now);
-    mi_ac_list.Add(Result.AccTime + fname);
+    mi_ac_list.Clear;
   finally
     LeaveCriticalSection(CS_ac_list);
   end;
 
-  EnterCriticalSection(CS_list);
+  EnterCriticalSection(CS_pr_list);
   try
-    Result.Locked:= False;
+    PriorityList.Add('');
   finally
-    LeaveCriticalSection(CS_list);
+    LeaveCriticalSection(CS_pr_list);
   end;
+  Suspended:= False;
 end;
 
 constructor TGetMediaInfo.Create(const fname: string; mi: Cardinal);
@@ -2412,7 +2433,8 @@ begin
   inherited Destroy;
 end;
 
-function TGetMediaInfo.GetMimeType(L: PLua_State; const scname: string): string;
+function TGetMediaInfo.GetMimeType(L: PLua_State; const scname: string;
+  get_new: boolean): string;
 
   procedure sub(L: PLua_State);
   var
@@ -2433,6 +2455,11 @@ var
   L2: PLua_State;
   isnil: boolean;
 begin
+  if not get_new and (MimeType <> '') then begin
+    Result:= MimeType;
+    Exit;
+  end;
+
   Result:= '';
   if Self.Count = 0 then Exit;
 
@@ -2472,6 +2499,8 @@ begin
     Result:= lua_tostring(L, -1);
     lua_pop(L, 1);
   end;
+
+  MimeType:= Result;
 end;
 
 procedure InitTrayIcon;
