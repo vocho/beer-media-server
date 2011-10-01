@@ -13,7 +13,7 @@ uses
 const
   APP_NAME = 'BEER Media Server';
   SHORT_APP_NAME = 'BMS';
-  APP_VERSION = '1.0.110919';
+  APP_VERSION = '1.0.111001';
   SHORT_APP_VERSION = '1.0';
 
 type
@@ -887,6 +887,7 @@ begin
             case ResultCode of
               200: s:= s + ' OK';
               404: s:= s + ' Not Found';
+              406: s:= s + ' Not Acceptable';
               //500: s:= s + ' Internal Server Error';
             end;
 
@@ -1613,6 +1614,7 @@ begin
                 r:= r + '<upnp:class>object.item.imageItem.photo</upnp:class>';
               end else begin
                 r:= r + '<upnp:class>object.item.videoItem</upnp:class>';
+                //r:= r+'<av:mediaClass xmlns:av="urn:schemas-sony-com:av">V</av:mediaClass>';
               end;
               r:= r + '</item>';
             finally
@@ -1683,9 +1685,10 @@ var
   nseek1, nseek2, ndur: double;
   iseek1, isize, fsize, range1, range2: Int64;
   buf: PByte;
-  now_rec: boolean;
+  now_rec, bTimeSeek, bRange: boolean;
 begin
   Result:= False;
+  UniOutput:= True;
   h:= TStringListUTF8.Create;
   mi:= thMIC.GetMediaInfo(fname);
   try
@@ -1709,7 +1712,14 @@ begin
         end;
         ndur:= SeekTimeStr2Num(dur);
         i:= Pos('TIMESEEKRANGE.DLNA.ORG:', UpperCase(InHeader));
-        if (i > 0) and (ndur > 0) then begin
+        bTimeSeek:= i > 0;
+        if bTimeSeek then begin
+          if ndur = 0 then begin
+            // TIMESEEKRANGEは使えませんと答える
+            // (DLNA Interoperability Guidelines v1.0 - 7.8.22.7)
+            Sock.SendString('HTTP/1.1 406 Not Acceptable' + CRLF + CRLF);
+            Exit;
+          end;
           s:= Copy(InHeader, i+23, Length(InHeader));
           s:= Trim(Fetch(s, CR));
           Fetch(s, '=');
@@ -1741,9 +1751,10 @@ begin
           end;
         end;
 
-        range1:= 0; range2:= 0;
+        range1:= 0; range2:= fsize - 1;
         i:= Pos('RANGE:', UpperCase(InHeader));
-        if i > 0 then begin
+        bRange:= i > 0;
+        if bRange then begin
           s:= Copy(InHeader, i+6, Length(InHeader));
           Fetch(s, '=');
           range1:= StrToInt64Def(Fetch(s, '-'), 0);
@@ -1755,8 +1766,7 @@ begin
           isize:= range2 - range1 + 1;
         end;
 
-        Sock.SendString('HTTP/1.1 200 OK' + CRLF);
-        if Sock.LastError <> 0 then Exit;
+        h.Add('HTTP/1.1 200 OK');
         h.Add('TransferMode.DLNA.ORG: Streaming');
         h.Add('Content-Type: ' + ct);
         h.Add('ContentFeatures.DLNA.ORG: ' + cf);
@@ -1767,35 +1777,31 @@ begin
           h.Add('Transfer-Encoding: chunked')
         else
           h.Add('Content-length: ' + IntToStr(isize));
-        ts_range:= '';
-        if (nseek1 <> 0) or (nseek2 <> 0) then begin
-          s:= SeekTimeNum2Str(nseek2);
-          if nseek2 = 0 then s:= SeekTimeNum2Str(ndur);
-          ts_range:= SeekTimeNum2Str(nseek1) + '-' + s + '/' + dur;
-          h.Add('TimeSeekRange.dlna.org: npt=' + ts_range);
-          h.Add('X-Seek-Range: npt=' + ts_range);
-        end;
-        range:= '';
-        if (range1 <> 0) or (range2 <> 0) then begin
-          range:= Format('%d-%d/%d', [range1, range2, fsize]);
+
+        if nseek2 > 0 then
+          s:= SeekTimeNum2Str(nseek2)
+        else
+          s:= SeekTimeNum2Str(ndur);
+        ts_range:= SeekTimeNum2Str(nseek1) + '-' + s + '/' + dur;
+        range:= Format('%d-%d/%d', [range1, range2, fsize]);
+        if bTimeSeek then begin
+          //s:= 'npt=' + ts_range + ' bytes=' + range;
+          s:= 'npt=' + ts_range;
+          h.Add('TimeSeekRange.dlna.org: ' + s);
+          h.Add('X-Seek-Range: ' + s);
+        end else if bRange then begin
           h.Add('Content-Range: bytes ' + range);
         end;
         h.Add('');
         for i:= 0 to h.Count - 1 do begin
           Sock.SendString(h[i] + CRLF);
           if Sock.LastError <> 0 then Exit;
+          Line:= Line + h[i] + CRLF;
         end;
+        Line:= Line + CRLF;
 
         if UpperCase(request) <> 'HEAD' then begin
-          Line:= line + GetLineHeader + 'STREAM sent' + CRLF +
-           fname + CRLF +
-           'Content-Type: ' + ct + CRLF +
-           'ContentFeatures.DLNA.ORG: ' + cf + CRLF;
-          if ts_range <> '' then
-           Line:= Line + 'TimeSeekRange.dlna.org: npt=' + ts_range + CRLF;
-          if range <> '' then
-           Line:= Line + 'Content-Range: bytes ' + range + CRLF;
-          Line:= Line + CRLF;
+          Line:= line + GetLineHeader + 'STREAM sent' + CRLF + fname + CRLF + CRLF;
           Synchronize(@AddLog);
 
           if now_rec then begin
@@ -1847,7 +1853,6 @@ begin
         fs.Free;
       end;
 
-      UniOutput:= True;
       Result:= True;
     except
     end;
@@ -1871,6 +1876,7 @@ var
   stream: TStringStream;
 begin
   Result:= False;
+  UniOutput:= True;
   h:= TStringListUTF8.Create;
   mi:= thMIC.GetMediaInfo(fname);
   try
@@ -1933,8 +1939,7 @@ begin
         end;
       end;
 
-      Sock.SendString('HTTP/1.1 200 OK' + CRLF);
-      if Sock.LastError <> 0 then Exit;
+      h.Add('HTTP/1.1 200 OK');
       h.Add('TransferMode.DLNA.ORG: Streaming');
       h.Add('Content-Type: ' + ct);
       h.Add('ContentFeatures.DLNA.ORG: ' + cf);
@@ -1954,15 +1959,12 @@ begin
       for i:= 0 to h.Count - 1 do begin
         Sock.SendString(h[i] + CRLF);
         if Sock.LastError <> 0 then Exit;
+        Line:= Line + h[i] + CRLF;
       end;
+      Line:= Line + CRLF;
 
       if UpperCase(request) <> 'HEAD' then begin
-        Line:= line + GetLineHeader + 'STREAM sent' + CRLF +
-         fname + CRLF +
-         'Content-Type: ' + ct + CRLF +
-         'ContentFeatures.DLNA.ORG: ' + cf + CRLF +
-         'TimeSeekRange.dlna.org: npt=' + range +
-         CRLF + CRLF;
+        Line:= line + GetLineHeader + 'STREAM sent' + CRLF + fname + CRLF + CRLF;
         Synchronize(@AddLog);
 
         buf_size:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'STREAM_BUFFER_SIZE', 10);
@@ -2084,11 +2086,9 @@ begin
           FreeMem(buf);
         end;
 
-        Line:= GetLineHeader + 'STREAM fin' + CRLF +
-         fname + CRLF + CRLF;
+        Line:= GetLineHeader + 'STREAM fin' + CRLF + fname + CRLF + CRLF;
       end;
 
-      UniOutput:= True;
       Result:= True;
     except
     end;
