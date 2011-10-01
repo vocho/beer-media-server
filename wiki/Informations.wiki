@@ -1,0 +1,5 @@
+#summary 追加情報など。コメントもどうぞ。
+
+= 追加情報 =
+
+http://oss.netfarm.it/mplayer-win32.php にて、MPlayer/MEncoder rev 34118 の配布が開始されましたが、当方で試す限り、音ずれなどの問題が発生します。そのような症状が出てしまう場合は、http://sourceforge.net/projects/mplayer-win32/files/MPlayer%20and%20MEncoder/ の rev 33883 を使用してください。
