@@ -319,7 +319,7 @@ begin
   //if Assigned(StdOut) then StdOut.Clear;
   //if Assigned(ErrOut) then ErrOut.Clear;
 
-  CreatePipe(hStdInReadPipe, hStdInWritePipe, @sa, 8192);
+  CreatePipe(hStdInReadPipe{%H-}, hStdInWritePipe{%H-}, @sa, 8192);
   DuplicateHandle(GetCurrentProcess(), hStdInWritePipe, GetCurrentProcess(),
                   @hStdInWritePipeDup, 0, false, DUPLICATE_SAME_ACCESS);
   CloseHandle(hStdInWritePipe);
@@ -358,8 +358,8 @@ begin
           while StreamBufferSize = 8192 do
           begin
             // 入力を与える
-            StreamBufferSize := StdIn.Read(bufStdIn, 8192);
-            WriteFile(hStdInWritePipeDup, bufStdIn, StreamBufferSize, nWritten, nil);
+            StreamBufferSize := StdIn.Read(bufStdIn{%H-}, 8192);
+            WriteFile(hStdInWritePipeDup, bufStdIn, StreamBufferSize, nWritten{%H-}, nil);
           end;
         end;
         // 入力を与え終わった
@@ -376,7 +376,7 @@ begin
               if (dwStdOut > 0) then
               begin
                 // 内容が存在すれば、読み取る
-                ReadFile(hReadPipe, bufStdOut, Length(bufStdOut) - 1, dwStdOut, nil);
+                ReadFile(hReadPipe, bufStdOut{%H-}, Length(bufStdOut) - 1, dwStdOut, nil);
                 StdOut.Write(bufStdOut, dwStdOut);
               end;
             end;
@@ -386,7 +386,7 @@ begin
               PeekNamedPipe(hErrReadPipe, nil, 0, nil, @dwErrOut, nil);
               if (dwErrOut > 0) then
               begin
-                ReadFile(hErrReadPipe, bufErrOut, Length(bufErrOut) - 1, dwErrOut, nil);
+                ReadFile(hErrReadPipe, bufErrOut{%H-}, Length(bufErrOut) - 1, dwErrOut, nil);
                 ErrOut.Write(bufErrOut, dwErrOut);
               end;
             end;
@@ -511,6 +511,7 @@ begin
     if (fname = '') or not FileExistsUTF8(fname) then Exit;
     s:= LowerCase(ExtractFileExt(fname));
     if (s = '.lua') or (s = '.txt') or  (s = '.m3u') or  (s = '.m3u8') then Exit;
+    if GetFileSize(fname) <= 0 then Exit;
     try
       // 書き込み中のファイルかを調べるため、fmShareDenyWriteで開いてみる
       fs:= TFileStreamUTF8.Create(fname, fmOpenRead or fmShareDenyWrite);
