@@ -5,34 +5,17 @@ unit unit2;
 interface
 
 uses
-  Classes, SysUtils;
+  Classes, SysUtils, lazutf8classes;
 
 type
 
-  { TStringListUTF8 }
+  { TStringListUTF8_mod }
 
-  TStringListUTF8 = class(TStringList)
+  TStringListUTF8_mod = class(TStringListUTF8)
   protected
     function DoCompareText(const s1,s2 : string) : PtrInt; override;
   public
-    procedure LoadFromFile(const FileName: string); override;
-    procedure SaveToFile(const FileName: string); override;
   end;
-
-  { TFileStreamUTF8 class }
-{$IFDEF WIN32}
-  TFileStreamUTF8 = class(THandleStream)
-  private
-    FFileName : string;
-  public
-    constructor Create(const AFileName: string; Mode: Word);
-    constructor Create(const AFileName: string; Mode: Word; {%H-}Rights: Cardinal);
-    destructor Destroy; override;
-    property FileName : string Read FFilename;
-  end;
-{$ELSE}
-  TFileStreamUTF8 = TFileStream;
-{$ENDIF}
 
 function DecodeX(const s: string): string;
 function EncodeX(const s: string): string;
@@ -57,99 +40,14 @@ uses
   MediaInfoDll,
   fileutil, synautil;
 
-{ TFileStreamUTF8 }
+{ TStringListUTF8_mod }
 
-{$IFDEF WIN32}
-function FileOpenUTF8(Const FileName : string; Mode : Integer) : THandle;
-const
-  AccessMode: array[0..2] of Cardinal  = (
-    GENERIC_READ,
-    GENERIC_WRITE,
-    GENERIC_READ or GENERIC_WRITE);
-  ShareMode: array[0..4] of Integer = (
-               0,
-               0,
-               FILE_SHARE_READ,
-               FILE_SHARE_WRITE,
-               FILE_SHARE_READ or FILE_SHARE_WRITE);
-begin
-  Result := CreateFileW(PWideChar(UTF8Decode(FileName)), dword(AccessMode[Mode and 3]),
-                       dword(ShareMode[(Mode and $F0) shr 4]), nil, OPEN_EXISTING,
-                       FILE_ATTRIBUTE_NORMAL, 0);
-  //if fail api return feInvalidHandle (INVALIDE_HANDLE=feInvalidHandle=-1)
-end;
-
-function FileCreateUTF8(Const FileName : String) : THandle;
-begin
-  Result := CreateFileW(PWideChar(UTF8Decode(FileName)), GENERIC_READ or GENERIC_WRITE,
-                       0, nil, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
-end;
-
-constructor TFileStreamUTF8.Create(const AFileName: string; Mode: Word);
-var
-  h: THandle;
-begin
-  FFileName:= AFileName;
-  if Mode = fmcreate then
-    h:= FileCreateUTF8(AFileName)
-  else
-    h:= FileOpenUTF8(AFileName, Mode);
-
-  if h = feInvalidHandle then
-  begin
-    if Mode = fmCreate then
-      raise EFCreateError.createfmt({SFCreateError}'Unable to create file "%s"', [AFileName])
-    else
-      raise EFOpenError.Createfmt({SFOpenError}'Unable to open file "%s"', [AFilename]);
-  end else begin
-    inherited Create(h);
-  end;
-end;
-
-constructor TFileStreamUTF8.Create(const AFileName: string; Mode: Word;
-  Rights: Cardinal);
-begin
-  Create(AFileName, Mode);
-end;
-
-destructor TFileStreamUTF8.Destroy;
-begin
-  FileClose(Handle);
-end;
-{$ENDIF}
-
-{ TStringListUTF8 }
-
-function TStringListUTF8.DoCompareText(const s1, s2: string): PtrInt;
+function TStringListUTF8_mod.DoCompareText(const s1, s2: string): PtrInt;
 begin
   if CaseSensitive then
-    Result:= CompareStr(s1,s2)
+    Result:= CompareStr(s1, s2)
   else
-    Result:= CompareText(s1,s2);
-end;
-
-procedure TStringListUTF8.LoadFromFile(const FileName: string);
-var
-  TheStream: TFileStreamUTF8;
-begin
-  TheStream:= TFileStreamUTF8.Create(FileName, fmOpenRead or fmShareDenyWrite);
-  try
-    LoadFromStream(TheStream);
-  finally
-    TheStream.Free;
-  end;
-end;
-
-procedure TStringListUTF8.SaveToFile(const FileName: string);
-var
-  TheStream: TFileStreamUTF8;
-begin
-  TheStream:=TFileStreamUTF8.Create(FileName,fmCreate);
-  try
-    SaveToStream(TheStream);
-  finally
-    TheStream.Free;
-  end;
+    Result:= CompareText(s1, s2);
 end;
 
 function EncodeX(const s: string): string;
@@ -560,6 +458,7 @@ begin
             sl.Add('Video;Duration=' + GetInfo2(mi, Stream_Video, main_v, 'Duration/String3'));
             sl.Add('Video;BitRate=' + GetInfo2(mi, Stream_Video, main_v, 'BitRate'));
             sl.Add('Video;FrameRate=' + GetInfo2(mi, Stream_Video, main_v, 'FrameRate'));
+            sl.Add('Video;FrameRate_Mode=' + GetInfo2(mi, Stream_Video, main_v, 'FrameRate_Mode'));
             sl.Add('Video;Standard=' + GetInfo2(mi, Stream_Video, main_v, 'Standard'));
             sl.Add('Video;CodecID=' + GetInfo2(mi, Stream_Video, main_v, 'CodecID'));
             sl.Add('Video;DisplayAspectRatio=' + GetInfo2(mi, Stream_Video, main_v, 'DisplayAspectRatio'));

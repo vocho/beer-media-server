@@ -13,7 +13,7 @@ uses
 const
   APP_NAME = 'BEER Media Server';
   SHORT_APP_NAME = 'BMS';
-  APP_VERSION = '1.0.111001';
+  APP_VERSION = '1.0.111006';
   SHORT_APP_VERSION = '1.0';
 
 type
@@ -49,7 +49,7 @@ uses
   {$IFDEF Win32}
   interfacebase, win32int, windows, // for Hook SUSPEND EVENT
   {$ENDIF}
-  inifiles, comobj, contnrs, process, utf8process, SynRegExpr,
+  lazutf8classes, inifiles, comobj, contnrs, process, utf8process, SynRegExpr,
   unit2;
 
 
@@ -1251,7 +1251,7 @@ var
       if (s = '.m3u') or (s = '.m3u8') then begin
         // m3u
         sl.Sorted:= False;
-        sl2:= TStringListUTF8.Create;
+        sl2:= TStringListUTF8_mod.Create;
         try
           sl2.LoadFromFile(dir);
           b:= (sl.Count > 0) and (Length(sl[0]) >= 3) and
@@ -1289,13 +1289,13 @@ var
         sl.Sorted:= False;
         stream:= TStringStream.Create(DoGetTranscodeCommand(dir));
         ini:= TIniFile.Create(stream);
-        sl2:= TStringListUTF8.Create;
+        sl2:= TStringListUTF8_mod.Create;
         try
           ini.ReadSections(sl2);
           for i:= 0 to sl2.Count-1 do begin
             s:= StringReplace(sl2[i], '$_name_$',
              ChangeFileExt(ExtractFileName(dir), ''), [rfReplaceAll]);
-            sl3:= TStringListUTF8.Create;
+            sl3:= TStringListUTF8_mod.Create;
             try
               ini.ReadSectionRaw(sl2[i], sl3);
               sl.Add(#5 + StringReplace(sl3.Text, CRLF, ' ', [rfReplaceAll]) +
@@ -1412,7 +1412,7 @@ begin
   item:= docw.CreateElement('Result');
   parent.AppendChild(item);
 
-  mlist:= TStringListUTF8.Create;
+  mlist:= TStringListUTF8_mod.Create;
   try
     if id = '0' then begin
       if MediaDirs.Count = 0 then begin
@@ -1865,7 +1865,7 @@ end;
 function THttpThrd.DoPlayTranscode(sno: integer; const fname, request: string): boolean;
 var
   mi: TGetMediaInfo;
-  cmd, exec, tmp_fname, ct, cf, s, seek1, seek2, dur, range: string;
+  cmd, exec, tmp_fname, ct, cf, s, seek1, seek2, dur, ts_range, range: string;
   fs: TFileStreamUTF8;
   h, sl: TStringListUTF8;
   i, buf_size, errc: integer;
@@ -1874,6 +1874,8 @@ var
   proc: TProcessUTF8;
   ini: TIniFile;
   stream: TStringStream;
+  bTimeSeek, bRange: boolean;
+  range1, range2: Int64;
 begin
   Result:= False;
   UniOutput:= True;
@@ -1900,197 +1902,219 @@ begin
     cf:= mi.GetMimeType(L_S, ScriptFileName);
     ct:= Fetch(cf, ':');
     cf:= Fetch(cf, ':::');
-    try
-      nseek1:= 0; nseek2:= 0;
-      dur:= '';
-      if mi.Values['General;Format'] = 'ISO DVD' then begin
-        i:= Pos('dvd://', cmd);
-        if i > 0 then begin
-          s:= Copy(cmd, i+6, MaxInt);
-          s:= Fetch(s, ' ');
-          if s = '$_longest_$' then begin
-            s:= mi.Values['DVD;LONGEST'];
-            cmd:= StringReplace(cmd, '$_longest_$', s, [rfReplaceAll]);
-          end;
-          s:= mi.Values['DVD;LENGTH' + IntToStr(StrToInt(s))];
-          if s <> '' then dur:= SeekTimeNum2Str(SeekTimeStr2Num(s));
+    nseek1:= 0; nseek2:= 0;
+    dur:= '';
+    if mi.Values['General;Format'] = 'ISO DVD' then begin
+      i:= Pos('dvd://', cmd);
+      if i > 0 then begin
+        s:= Copy(cmd, i+6, MaxInt);
+        s:= Fetch(s, ' ');
+        if s = '$_longest_$' then begin
+          s:= mi.Values['DVD;LONGEST'];
+          cmd:= StringReplace(cmd, '$_longest_$', s, [rfReplaceAll]);
         end;
-      end else begin
-        dur:= mi.Values['General;Duration'];
+        s:= mi.Values['DVD;LENGTH' + IntToStr(StrToInt(s))];
+        if s <> '' then dur:= SeekTimeNum2Str(SeekTimeStr2Num(s));
       end;
-      if dur = '' then dur:= '20:00:00.000'; // 20時間のファイルと仮定する
-      ndur:= SeekTimeStr2Num(dur);
-      i:= Pos('TIMESEEKRANGE.DLNA.ORG:', UpperCase(InHeader));
-      if (i > 0) and (ndur > 0) then begin
-        s:= Copy(InHeader, i+23, Length(InHeader));
-        s:= Trim(Fetch(s, CR));
-        Fetch(s, '=');
-        seek2:= Trim(s);
-        seek1:= Fetch(seek2, '-');
-        nseek1:= SeekTimeStr2Num(seek1);
-        nseek2:= SeekTimeStr2Num(seek2);
-      end else begin
-        i:= Pos('RANGE:', UpperCase(InHeader));
-        if i > 0 then begin
-          // RANGEは使えませんと答える
-          // (DLNA Interoperability Guidelines v1.0 - 7.8.22.7)
-          Sock.SendString('HTTP/1.1 406 Not Acceptable' + CRLF + CRLF);
-          Exit;
-        end;
-      end;
+    end else begin
+      dur:= mi.Values['General;Duration'];
+    end;
+    if dur = '' then dur:= '20:00:00.000'; // 20時間のファイルと仮定する
+    ndur:= SeekTimeStr2Num(dur);
+    i:= Pos('TIMESEEKRANGE.DLNA.ORG:', UpperCase(InHeader));
+    bTimeSeek:= i > 0;
+    if bTimeSeek then begin
+      s:= Copy(InHeader, i+23, Length(InHeader));
+      s:= Trim(Fetch(s, CR));
+      Fetch(s, '=');
+      seek2:= Trim(s);
+      seek1:= Fetch(seek2, '-');
+      nseek1:= SeekTimeStr2Num(seek1);
+      nseek2:= SeekTimeStr2Num(seek2);
+    end;
 
-      h.Add('HTTP/1.1 200 OK');
-      h.Add('TransferMode.DLNA.ORG: Streaming');
-      h.Add('Content-Type: ' + ct);
-      h.Add('ContentFeatures.DLNA.ORG: ' + cf);
-      h.Add('Accept-Ranges: bytes');
-      h.Add('Connection: keep-alive');
-      h.Add('Server: ' + HTTP_HEAD_SERVER);
-      h.Add('Transfer-Encoding: chunked');
-      range:= '';
-      if (nseek1 <> 0) or (nseek2 <> 0) then begin
-        s:= SeekTimeNum2Str(nseek2);
-        if nseek2 = 0 then s:= SeekTimeNum2Str(ndur);
-        range:= SeekTimeNum2Str(nseek1) + '-' + s + '/*'{ + dur};
-        h.Add('TimeSeekRange.dlna.org: npt=' + range);
-        h.Add('X-Seek-Range: npt=' + range);
-      end;
-      h.Add('');
-      for i:= 0 to h.Count - 1 do begin
-        Sock.SendString(h[i] + CRLF);
-        if Sock.LastError <> 0 then Exit;
-        Line:= Line + h[i] + CRLF;
-      end;
-      Line:= Line + CRLF;
+    range1:= 0; range2:= -1;
+    i:= Pos('RANGE:', UpperCase(InHeader));
+    bRange:= i > 0;
+    if bRange then begin
+      s:= Copy(InHeader, i+6, Length(InHeader));
+      Fetch(s, '=');
+      range1:= StrToInt64Def(Fetch(s, '-'), 0);
+      range2:= StrToInt64Def(Fetch(s, CR), -1);
+    end;
 
-      if UpperCase(request) <> 'HEAD' then begin
-        Line:= line + GetLineHeader + 'STREAM sent' + CRLF + fname + CRLF + CRLF;
-        Synchronize(@AddLog);
+    h.Add('HTTP/1.1 200 OK');
+    h.Add('TransferMode.DLNA.ORG: Streaming');
+    h.Add('Content-Type: ' + ct);
+    h.Add('ContentFeatures.DLNA.ORG: ' + cf);
+    h.Add('Accept-Ranges: bytes');
+    h.Add('Connection: keep-alive');
+    h.Add('Server: ' + HTTP_HEAD_SERVER);
+    h.Add('Transfer-Encoding: chunked');
+    if nseek2 > 0 then
+      s:= SeekTimeNum2Str(nseek2)
+    else
+      s:= SeekTimeNum2Str(ndur);
+    ts_range:= SeekTimeNum2Str(nseek1) + '-' + s + '/' + dur;
+    if range2 >= 0 then
+      range:= Format('%d-%d/*', [range1, range2])
+    else
+      range:= Format('%d-/*', [range1]);
+    if bTimeSeek then begin
+      //s:= 'npt=' + ts_range + ' bytes=' + range;
+      s:= 'npt=' + ts_range;
+      h.Add('TimeSeekRange.dlna.org: ' + s);
+      h.Add('X-Seek-Range: ' + s);
+    end else if bRange then begin
+      h.Add('Content-Range: bytes ' + range);
+    end;
+    h.Add('');
+    for i:= 0 to h.Count - 1 do begin
+      Sock.SendString(h[i] + CRLF);
+      if Sock.LastError <> 0 then Exit;
+      Line:= Line + h[i] + CRLF;
+    end;
+    Line:= Line + CRLF;
 
-        buf_size:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'STREAM_BUFFER_SIZE', 10);
-        if buf_size < 1 then buf_size:= 1;
-        if buf_size > 1800 then buf_size:= 1800;
-        buf_size:= buf_size * 1024 * 1024;
-        buf:= GetMem(buf_size);
+    if UpperCase(request) <> 'HEAD' then begin
+      Line:= line + GetLineHeader + 'STREAM sent' + CRLF + fname + CRLF + CRLF;
+      Synchronize(@AddLog);
+
+      buf_size:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'STREAM_BUFFER_SIZE', 10);
+      if buf_size < 1 then buf_size:= 1;
+      if buf_size > 1800 then buf_size:= 1800;
+      buf_size:= buf_size * 1024 * 1024;
+      buf:= GetMem(buf_size);
+      try
+        tmp_fname:= FileUtil.GetTempFileName(TempPath, '$BMS_TRANS');
+        proc:= TProcessUTF8.Create(nil);
         try
-          tmp_fname:= FileUtil.GetTempFileName(TempPath, '$BMS_TRANS');
-          proc:= TProcessUTF8.Create(nil);
-          try
-            cmd:= StringReplace(cmd, '$_in_$', ExtractShortPathNameUTF8(fname), [rfReplaceAll]);
-            cmd:= StringReplace(cmd, '$_out_$', tmp_fname, [rfReplaceAll]);
-            cmd:= '"' + ExecPath + exec + '" ' + cmd;
-            if exec = 'mencoder' then begin
+          cmd:= StringReplace(cmd, '$_in_$', ExtractShortPathNameUTF8(fname), [rfReplaceAll]);
+          cmd:= StringReplace(cmd, '$_out_$', tmp_fname, [rfReplaceAll]);
+          cmd:= '"' + ExecPath + exec + '" ' + cmd;
+          if exec = 'mencoder' then begin
+            if bTimeSeek then begin
               if nseek1 <> 0 then begin
                 cmd := cmd + ' -ss ' + SeekTimeNum2Str(nseek1);
               end;
               if (nseek2 > nseek1) then begin
                 cmd := cmd + ' -endpos ' + SeekTimeNum2Str(nseek2-nseek1);
               end;
-              cmd:= cmd + ' -quiet';
-            end else if exec = 'ffmpeg' then begin
+            end else if bRange then begin
+              cmd := cmd + ' -sb ' + IntToStr(range1);
+              if range2 >= 0 then begin
+                cmd := cmd + ' -endpos ' + IntToStr(range2-range1+1) + 'b';
+              end;
+            end;
+            cmd:= cmd + ' -quiet';
+          end else if exec = 'ffmpeg' then begin
+            if bTimeSeek then begin
               if nseek1 <> 0 then begin
                 cmd := cmd + ' -ss ' + SeekTimeNum2Str(nseek1);
               end;
               if (nseek2 > nseek1) then begin
                 cmd := cmd + ' -t ' + SeekTimeNum2Str(nseek2-nseek1);
               end;
-              //cmd:= cmd + ' -quiet';
+            end else if bRange then begin
+              // ffmpeg では -sb にあたるのがないので Range Seek　はできなそう
+              //cmd := cmd + ' -sb ' + IntToStr(range1);
+              //if range2 >= 0 then begin
+              //  cmd := cmd + ' -fs ' + IntToStr(range2-range1+1);
+              //end;
             end;
+            //cmd:= cmd + ' -quiet';
+          end;
 
-            Line:= GetLineHeader + 'TRANSCODE ' + exec + CRLF + cmd + CRLF + CRLF;
-            Synchronize(@AddLog);
+          Line:= GetLineHeader + 'TRANSCODE ' + exec + CRLF + cmd + CRLF + CRLF;
+          Synchronize(@AddLog);
 
-            proc.CommandLine:= cmd;
-            proc.Options:= [poNoConsole];
+          proc.CommandLine:= cmd;
+          proc.Options:= [poNoConsole];
+          proc.Execute;
+          while proc.Running and not FileExistsUTF8(tmp_fname) do begin
+            Sleep(100);
+          end;
+
+          if not FileExistsUTF8(tmp_fname) then begin
+            // エラーメッセージを取得するためもう一度実行
+            proc.Options:= [poUsePipes, poNoConsole];
             proc.Execute;
-            while proc.Running and not FileExistsUTF8(tmp_fname) do begin
-              Sleep(100);
-            end;
-
-            if not FileExistsUTF8(tmp_fname) then begin
-              // エラーメッセージを取得するためもう一度実行
-              proc.Options:= [poUsePipes, poNoConsole];
-              proc.Execute;
-              while proc.Running do begin
-                i:= proc.Output.Read(buf^, 1024);
-                if i > 0 then begin
-                  buf[i]:= 0;
-                  line := line + StrPas(PChar(buf));
-                  if Length(line) > 1024 then Synchronize(@AddLog);
-                end else begin
-                  Sleep(100);
-                end;
-              end;
-              while True do begin
-                i:= proc.Output.Read(buf^, 1024);
-                if i <= 0 then Break;
+            while proc.Running do begin
+              i:= proc.Output.Read(buf^, 1024);
+              if i > 0 then begin
                 buf[i]:= 0;
-                line := StrPas(PChar(buf));
-                Synchronize(@AddLog);
+                line := line + StrPas(PChar(buf));
+                if Length(line) > 1024 then Synchronize(@AddLog);
+              end else begin
+                Sleep(100);
               end;
-              Exit;
             end;
+            while True do begin
+              i:= proc.Output.Read(buf^, 1024);
+              if i <= 0 then Break;
+              buf[i]:= 0;
+              line := StrPas(PChar(buf));
+              Synchronize(@AddLog);
+            end;
+            Exit;
+          end;
 
-            fs:= TFileStreamUTF8.Create(tmp_fname, fmOpenRead or fmShareDenyNone);
-            try
-              errc:= 0;
-              while proc.Running do begin
+          fs:= TFileStreamUTF8.Create(tmp_fname, fmOpenRead or fmShareDenyNone);
+          try
+            errc:= 0;
+            while proc.Running do begin
+              i:= fs.Read(buf^, buf_size);
+              if i <= 0 then begin
+                Sleep(1);
+                Inc(errc);
+              end else begin
+                errc:= 0;
+                //Sock.SendString(LowerCase(IntToHex(i, 1)) + CRLF);
+                //Sock.SendBuffer(buf, i);
+                //Sock.SendString(CRLF);
+                SendRaw(LowerCase(IntToHex(i, 1)) + CRLF);
+                SendRaw(buf, i);
+                SendRaw(CRLF);
+              end;
+              if (Sock.LastError <> 0) or (errc > 5000) or Terminated then begin
+                proc.Terminate(-1);
+              end;
+            end;
+            if not proc.Running then begin
+              while not Terminated do begin
                 i:= fs.Read(buf^, buf_size);
-                if i <= 0 then begin
-                  Sleep(1);
-                  Inc(errc);
-                end else begin
-                  errc:= 0;
-                  //Sock.SendString(LowerCase(IntToHex(i, 1)) + CRLF);
-                  //Sock.SendBuffer(buf, i);
-                  //Sock.SendString(CRLF);
-                  SendRaw(LowerCase(IntToHex(i, 1)) + CRLF);
-                  SendRaw(buf, i);
-                  SendRaw(CRLF);
+                if i = 0 then begin
+                  //Sock.SendString('0' + CRLF + CRLF);
+                  SendRaw('0' + CRLF + CRLF);
+                  Break;
                 end;
-                if (Sock.LastError <> 0) or (errc > 5000) or Terminated then begin
-                  proc.Terminate(-1);
-                end;
+                //Sock.SendString(LowerCase(IntToHex(i, 1)) + CRLF);
+                //Sock.SendBuffer(buf, i);
+                //Sock.SendString(CRLF);
+                SendRaw(LowerCase(IntToHex(i, 1)) + CRLF);
+                SendRaw(buf, i);
+                SendRaw(CRLF);
+                if Sock.LastError <> 0 then Break;
               end;
-              if not proc.Running then begin
-                while not Terminated do begin
-                  i:= fs.Read(buf^, buf_size);
-                  if i = 0 then begin
-                    //Sock.SendString('0' + CRLF + CRLF);
-                    SendRaw('0' + CRLF + CRLF);
-                    Break;
-                  end;
-                  //Sock.SendString(LowerCase(IntToHex(i, 1)) + CRLF);
-                  //Sock.SendBuffer(buf, i);
-                  //Sock.SendString(CRLF);
-                  SendRaw(LowerCase(IntToHex(i, 1)) + CRLF);
-                  SendRaw(buf, i);
-                  SendRaw(CRLF);
-                  if Sock.LastError <> 0 then Break;
-                end;
-              end;
-            finally
-              fs.Free;
             end;
           finally
-            if proc.Running then proc.Terminate(-1);
-            proc.Free;
-            for i:= 1 to 6 do begin
-              if DeleteFileUTF8(tmp_fname) then
-                Break
-              else
-                Sleep(10000);
-            end;
+            fs.Free;
           end;
         finally
-          FreeMem(buf);
+          if proc.Running then proc.Terminate(-1);
+          proc.Free;
+          for i:= 1 to 6 do begin
+            if DeleteFileUTF8(tmp_fname) then
+              Break
+            else
+              Sleep(10000);
+          end;
         end;
-
-        Line:= GetLineHeader + 'STREAM fin' + CRLF + fname + CRLF + CRLF;
+      finally
+        FreeMem(buf);
       end;
 
-      Result:= True;
-    except
+      Line:= GetLineHeader + 'STREAM fin' + CRLF + fname + CRLF + CRLF;
     end;
   finally
     h.Free;
@@ -2203,11 +2227,11 @@ end;
 
 constructor TMediaInfoCollector.Create;
 begin
-  mi_list:= TStringListUTF8.Create;
+  mi_list:= TStringListUTF8_mod.Create;
   mi_list.Sorted:= True;
-  mi_ac_list:= TStringListUTF8.Create;
+  mi_ac_list:= TStringListUTF8_mod.Create;
   mi_ac_list.Sorted:= True;
-  PriorityList:= TStringListUTF8.Create;
+  PriorityList:= TStringListUTF8_mod.Create;
   FreeOnTerminate:= False;
   MaxMediaInfo:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'MAX_MEDIAINFO', 500);
   InitCriticalSection(CS_list);
