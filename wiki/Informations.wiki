@@ -6,8 +6,9 @@ http://oss.netfarm.it/mplayer-win32.php にて、MPlayer/MEncoder rev 34118 の�
 
 
 204氏によりますと、ブラビア EX700 では、DLNA.ORG_PN=AVC_TS_HD_60_AC3_ISO の指定で、AC-3 音声以外も再生できるとのことです。 
-同じ機種の方は、BRAVIA-KDL-JP5.lua 内の
-if minfo.Video.Format == "AVC" and minfo.Audio.Format == "AC-3" then という箇所を
-if minfo.Video.Format == "AVC" then に変更してお試しください。
-もっとも、AAC 音声の場合は、DLNA.ORG_PN=AVC_TS_JP_AAC_T を使うべきなのかもしれません。いろいろ試してみてください。
 
+同じ機種の方は、BRAVIA-KDL-JP5.lua 内の
+
+if minfo.Video.Format == "AVC" and minfo.Audio.Format == "AC-3" then という箇所を
+
+if minfo.Video.Format == "AVC" then に変更してお試しください。もっとも、AAC 音声の場合は、DLNA.ORG_PN=AVC_TS_JP_AAC_T を使うべきなのかもしれません。いろいろ試してみてください。
