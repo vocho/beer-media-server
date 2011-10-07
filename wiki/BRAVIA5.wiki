@@ -185,8 +185,6 @@ function GetMimeType(fname, minfo)
     end
   end
 
-  -- ！！！ここまでは BRAVIA-KDL-JP5.lua と同じ！！！
-
   if minfo.General.Format == "MPEG-PS"
    -- NTSC?
    and ((fr == "29") or (fr == "59") or (minfo.Video.Standard == "NTSC"))
