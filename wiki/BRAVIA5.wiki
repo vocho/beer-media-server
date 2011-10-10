@@ -219,7 +219,7 @@ function GetMimeType(fname, minfo)
 
     -- 24p(not PAL)?
     elseif fr ~= "25" and fr ~= "50" then
-      res = "video/mpeg:"
+      return "video/mpeg:"
        .."DLNA.ORG_PN=AVC_TS_HD_24_AC3_ISO;"
        .."SONY.COM_PN=AVC_TS_HD_24_AC3_ISO;"
        .."DLNA.ORG_FLAGS=8d700000000000000000000000000000;"
