@@ -7,4 +7,4 @@
  * iPhone 4 用 Media Link Player Lite 1.1.8
 
 == ユーザーから情報提供があったもの ==
- * SONY Bravia KDL-32J5、KDL-**EX700、KDL-40HX800
+ * SONY Bravia KDL-32J5、KDL-□EX700、KDL-40HX800
