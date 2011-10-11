@@ -7,4 +7,4 @@
 
 = ユーザーから情報提供があったもの =
 
- * SONY Bravia KDL-32J5、KDL-40HX800
+ * SONY Bravia KDL-32J5、KDL-**EX700、KDL-40HX800
