@@ -1,6 +1,6 @@
 #summary BRAVIA-KDL-JP5.lua 230氏版
 
-230氏からの情報によりますと、現バージョンの mencoder には mp4 の処理にバグがあるっぽく、次のようにして GetTranscodeCommand 関数内で ffmpeg を使うことで H264ToMpegTS = true としたときの処理がうまくいくとのことです。<br>
+230氏からの情報によりますと、現バージョンの mencoder には mp4 の処理にバグがあるっぽく、次のようにして GetTranscodeCommand 関数内で mencoder の代わりに ffmpeg を使うことで H264ToMpegTS = true としたときの処理がうまくいくとのことです。<br>
 FFmpegは http://oss.netfarm.it/mplayer-win32.php で配布されている FFmpeg git rev N-32754-g936d4d4 を使われたとのことです。<br>
 なお、FFMpeg.exe は  BMS.exe と同じフォルダに置いてください。<br>
 H264ToMpegTS = true とすることも忘れないでください。<br>
