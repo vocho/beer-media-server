@@ -9,3 +9,5 @@
  同じ機種の方は、BRAVIA-KDL-JP5.lua 内の<br>
  if minfo.Video.Format == "AVC" and minfo.Audio.Format == "AC-3" then <br>という箇所を<br>
  if minfo.Video.Format == "AVC" then<br>に変更してお試しください。もっとも、AAC 音声の場合は、DLNA.ORG_PN=AVC_TS_JP_AAC_T を使う方がよいのかもしれません。なにせ資料が不足していますのでいろいろ試してみていただけると助かります。
+
+ * [BRAVIA5_24p_230] - BRAVIA-KDL-JP5.lua で、H264ToMpegTS = true としてもうまくいかない方は参照してください。
