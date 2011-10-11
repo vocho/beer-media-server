@@ -1,10 +1,10 @@
 #summary 動作が確認されているクライアントの情報
 
-= 作者が実際に確認したもの =
+= 動作が確認されているクライアントの情報 =
 
+== 作者が実際に確認したもの ==
  * SONY Bravia KDL-32F1
  * iPhone 4 用 Media Link Player Lite 1.1.8
 
-= ユーザーから情報提供があったもの =
-
+== ユーザーから情報提供があったもの ==
  * SONY Bravia KDL-32J5、KDL-**EX700、KDL-40HX800
