@@ -21,4 +21,4 @@ http-get:*:application/x-dtcp1;CONTENTFORMAT="video/vnd.dlna.mpeg-tts":DLNA.ORG_
 http-get:*:application/x-dtcp1;CONTENTFORMAT="video/vnd.dlna.mpeg-tts":DLNA.ORG_PN=DTCP_MPEG_TS_SD_60_L2_T;SONY.COM_PN=DTCP_SESF_60_L2_T;DLNA.ORG_FLAGS=8d710000000000000000000000000000
 http-get:*:video/x-mp2t-mphl-188:*
 }}}
-なお、GPI は {{{ と }}} で囲って貼っていただけると上の例のように割と見やすくなります。
+なお、GPI は `{{{` と `}}}` で囲って貼っていただけると上の例のように割と見やすくなります。
