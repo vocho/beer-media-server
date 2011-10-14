@@ -21,5 +21,5 @@ http-get:*:application/x-dtcp1;CONTENTFORMAT="video/vnd.dlna.mpeg-tts":DLNA.ORG_
 http-get:*:application/x-dtcp1;CONTENTFORMAT="video/vnd.dlna.mpeg-tts":DLNA.ORG_PN=DTCP_MPEG_TS_SD_60_L2_T;SONY.COM_PN=DTCP_SESF_60_L2_T;DLNA.ORG_FLAGS=8d710000000000000000000000000000
 http-get:*:video/x-mp2t-mphl-188:*
 }}}
-なお、GPI は `{{{` と `}}}` で囲って貼っていただけると上の例のように割と見やすくなります。<br>
+なお、GPI は `{{{` と `}}}` で囲って貼っていただけると上の例のように割と見やすく表示されます。<br>
 また、「BRAVIA KDL-40J5 の GPI は、BRAVIA KDL-32F1 と同じです」というような情報も地味ながら貴重な情報なのではないかと思います。
