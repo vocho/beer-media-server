@@ -58,7 +58,7 @@
     </Units>
   </ProjectOptions>
   <CompilerOptions>
-    <Version Value="10"/>
+    <Version Value="11"/>
     <PathDelim Value="\"/>
     <Target>
       <Filename Value="BMS"/>
@@ -73,7 +73,6 @@
     </CodeGeneration>
     <Linking>
       <Debugging>
-        <GenerateDebugInfo Value="True"/>
         <DebugInfoType Value="dsStabs"/>
         <StripSymbols Value="True"/>
       </Debugging>

@@ -11,9 +11,9 @@ object Form1: TForm1
   LCLVersion = '0.9.31'
   object CheckBoxLog: TCheckBox
     Left = 18
-    Height = 16
+    Height = 22
     Top = 11
-    Width = 129
+    Width = 166
     Caption = 'ログをファイルに保存する'
     OnChange = CheckBoxLogChange
     TabOrder = 0

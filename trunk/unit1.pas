@@ -13,7 +13,7 @@ uses
 const
   APP_NAME = 'BEER Media Server';
   SHORT_APP_NAME = 'BMS';
-  APP_VERSION = '1.1.111011';
+  APP_VERSION = '1.1.111111';
   SHORT_APP_VERSION = '1.1';
 
 type
@@ -43,7 +43,7 @@ procedure InitAfterApplicationInitialize;
 
 implementation
 uses
-  blcksock, synsock, synautil, {synacode,}
+  LCLIntf, blcksock, synsock, synautil, {synacode,}
   DOM, XMLWrite, XMLRead, MediaInfoDll,
   Lua, lualib, lauxlib,
   {$IFDEF Win32}
@@ -87,6 +87,7 @@ type
     th_list: TObjectList;
     procedure AddLog;
   public
+    SendAliveFlag: boolean;
     constructor Create;
     destructor Destroy; override;
     procedure Execute; override;
@@ -183,6 +184,7 @@ var
   thMIC: TMediaInfoCollector;
   MediaDirs: TStringList;
   ClientInfoList: TStringList;
+  MyIPAddr: string;
 
 function Alloc({%H-}ud, ptr: Pointer; {%H-}osize, nsize: size_t) : Pointer; cdecl;
 begin
@@ -234,11 +236,24 @@ begin
   Result := 1;
 end;
 
+function ScriptFileExists_func(L : Plua_State) : Integer; cdecl;
+var
+  s: string;
+  b: boolean;
+begin
+  s:= lua_tostring(L, 1);
+  b:= FileExistsUTF8(ExecPath + 'script/' + s + '.lua') or
+   FileExistsUTF8(ExecPath + 'script_user/' + s + '.lua');
+  lua_pushboolean(L, b);
+  Result := 1;
+end;
+
 procedure InitLua(L: Plua_State);
 begin
   luaL_openlibs(L);
   lua_register(L, 'print', @print_func);
   lua_register(L, 'tonumberDef', @tonumberDef_func);
+  lua_register(L, 'ScriptFileExists', @ScriptFileExists_func);
   lua_newtable(L);
   lua_pushstring(L, 'matches');
   lua_pushcfunction(L, @regexpr_matches_func);
@@ -283,7 +298,7 @@ end;
 procedure SendAlive;
 var
   sock: TUDPBlockSocket;
-  s, myip: string;
+  s: string;
 begin
   // Sends an advertisement "alive" message on multicast
   sock:= TUDPBlockSocket.Create;
@@ -294,14 +309,14 @@ begin
     sock.MulticastTTL:= 1;
     sock.Connect('239.255.255.250', '1900'{SSDP});
     if sock.LastError = 0 then begin
-      myip:= Sock.ResolveName(Sock.LocalName);
+      if MyIPAddr = '' then MyIPAddr:= Sock.ResolveName(Sock.LocalName);
 
       //{
       s:=
        'NOTIFY * HTTP/1.1' + CRLF +
        'HOST: 239.255.255.250:1900'+ CRLF +
        'CACHE-CONTROL: max-age=2100'+ CRLF +
-       'LOCATION: http://' + myip + ':' + DAEMON_PORT +
+       'LOCATION: http://' + MyIPAddr + ':' + DAEMON_PORT +
          '/desc.xml' + CRLF +
        'NT: upnp:rootdevice'+ CRLF +
        'NTS: ssdp:alive'+ CRLF +
@@ -315,7 +330,7 @@ begin
        'NOTIFY * HTTP/1.1' + CRLF +
        'HOST: 239.255.255.250:1900'+ CRLF +
        'CACHE-CONTROL: max-age=2100'+ CRLF +
-       'LOCATION: http://' + myip + ':' + DAEMON_PORT +
+       'LOCATION: http://' + MyIPAddr + ':' + DAEMON_PORT +
          '/desc.xml' + CRLF +
        'NT: uuid:' + UUID + CRLF +
        'NTS: ssdp:alive'+ CRLF +
@@ -330,7 +345,7 @@ begin
        'NOTIFY * HTTP/1.1' + CRLF +
        'HOST: 239.255.255.250:1900'+ CRLF +
        'CACHE-CONTROL: max-age=2100'+ CRLF +
-       'LOCATION: http://' + myip + ':' + DAEMON_PORT +
+       'LOCATION: http://' + MyIPAddr + ':' + DAEMON_PORT +
          '/desc.xml' + CRLF +
        'NT: urn:schemas-upnp-org:device:MediaServer:1' + CRLF +
        'NTS: ssdp:alive'+ CRLF +
@@ -345,7 +360,7 @@ begin
        'NOTIFY * HTTP/1.1' + CRLF +
        'HOST: 239.255.255.250:1900'+ CRLF +
        'CACHE-CONTROL: max-age=2100'+ CRLF +
-       'LOCATION: http://' + myip + ':' + DAEMON_PORT +
+       'LOCATION: http://' + MyIPAddr + ':' + DAEMON_PORT +
          '/desc.xml' + CRLF +
        'NT: urn:schemas-upnp-org:service:ContentDirectory:1' + CRLF +
        'NTS: ssdp:alive'+ CRLF +
@@ -359,7 +374,7 @@ begin
        'NOTIFY * HTTP/1.1' + CRLF +
        'HOST: 239.255.255.250:1900'+ CRLF +
        'CACHE-CONTROL: max-age=2100'+ CRLF +
-       'LOCATION: http://' + myip + ':' + DAEMON_PORT +
+       'LOCATION: http://' + MyIPAddr + ':' + DAEMON_PORT +
          '/desc.xml' + CRLF +
        'NT: urn:schemas-upnp-org:service:ConnectionManager:1' + CRLF +
        'NTS: ssdp:alive'+ CRLF +
@@ -659,6 +674,7 @@ begin
     $0007{PBT_APMRESUMESUSPEND}: begin
       MyApp.AddLog('*** WAKE UP!!!'+ CRLF+CRLF);
       SendAlive; // alive
+      thHTTPDaemon.SendAliveFlag:= True;
     end;
   end;
 end;
@@ -725,6 +741,7 @@ begin
   Sock.Family:= SF_IP4;
   th_list:= TObjectList.Create(False);
   FreeOnTerminate:= False;
+  SendAliveFlag:= True;
   inherited Create(False);
 end;
 
@@ -749,7 +766,8 @@ procedure THttpDaemon.Execute;
 var
   th: THttpThrd;
   ci: TClientInfo;
-  i: integer;
+  i, c: integer;
+  s: string;
 begin
   try
     Sock.CreateSocket();
@@ -759,11 +777,31 @@ begin
     if Sock.LastError <> 0 then raise Exception.Create(Sock.LastErrorDesc);
     Sock.Listen; // 接続準備
     if Sock.LastError <> 0 then raise Exception.Create(Sock.LastErrorDesc);
+    c:= 0;
     while not Terminated do begin
+      if SendAliveFlag then begin
+        Inc(c);
+        if c mod 5 = 0 then SendAlive; // 5秒毎に創出
+        if c >= 300 then begin // 5分間が限度
+          c:= 0;
+          SendAliveFlag:= False;
+        end;
+      end;
+
       if Sock.CanRead(1000) then begin
         if Sock.LastError = 0 then begin
           th:= THttpThrd.Create(Sock.Accept); // 接続待機
           th_list.Add(th);
+
+          if SendAliveFlag then begin
+            if MyIPAddr = '' then MyIPAddr:= Sock.ResolveName(Sock.LocalName);
+            s:= Sock.GetRemoteSinIP;
+            if (MyIPAddr <> s) and (s <> '127.0.0.1') then begin
+              SendAlive; // 念のため
+              c:= 0;
+              SendAliveFlag:= False;
+            end;
+          end;
         end;
       end;
 
@@ -863,6 +901,7 @@ begin
       InitLua(L_S);
       LoadLua(L_S, 'common');
       CallLua(L_S, 0, 0);
+
       repeat
         if Terminated then Break;
         try
@@ -897,8 +936,8 @@ begin
           lua_getfield(L_S, LUA_GLOBALSINDEX, 'GetScriptFileName');
           lua_pushstring(L_S, InHeader);
           lua_pushstring(L_S, Sock.GetRemoteSinIP);
-          lua_pushstring(L_S, Sock.ResolveIPToName(Sock.GetRemoteSinIP));
-          CallLua(L_S, 3, 1);
+          //lua_pushstring(L_S, Sock.ResolveIPToName(Sock.GetRemoteSinIP));
+          CallLua(L_S, 2, 1);
           ScriptFileName:= lua_tostring(L_S, -1);
           lua_pop(L_S, 1);
 
@@ -1792,11 +1831,12 @@ var
   ct, cf, s, seek1, seek2, dur, ts_range, range: string;
   fs: TFileStreamUTF8;
   h: TStringListUTF8;
-  i, buf_size: integer;
+  i, buf_size, s_wait: integer;
   nseek1, nseek2, ndur: double;
   iseek1, isize, fsize, range1, range2: Int64;
   buf: PByte;
   now_rec, bTimeSeek, bRange: boolean;
+  time1, time2: LongWord;
 begin
   Result:= False;
   UniOutput:= True;
@@ -1924,6 +1964,13 @@ begin
             end;
           end;
 
+          s_wait:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'STREAM_WAIT', 0);
+          lua_getfield(L_S, LUA_GLOBALSINDEX, 'STREAM_WAIT');
+          if lua_isnumber(L_S, -1) then s_wait:= lua_tointeger(L_S, -1);
+          lua_pop(L_S, 1);
+          if (s_wait < 0) or (s_wait > 10000) then s_wait:= 0;
+
+          time1:= LCLIntf.GetTickCount;
           buf_size:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'STREAM_BUFFER_SIZE', 10);
           if buf_size < 1 then buf_size:= 1;
           if buf_size > 1800 then buf_size:= 1800;
@@ -1951,6 +1998,10 @@ begin
               SendRaw(buf, i);
               if now_rec then SendRaw(CRLF);
               if Sock.LastError <> 0 then Exit;
+              time2:= LCLIntf.GetTickCount;
+              if (s_wait > 0) and (time2 - time1 < s_wait) then
+                Sleep(s_wait - (time2 - time1));
+              time1:= time2;
               Dec(isize, i);
             end;
           finally
@@ -1979,7 +2030,7 @@ var
   cmd, exec, tmp_fname, ct, cf, s, seek1, seek2, dur, ts_range, range: string;
   fs: TFileStreamUTF8;
   h, sl: TStringListUTF8;
-  i, buf_size, errc: integer;
+  i, buf_size, errc, s_wait: integer;
   nseek1, nseek2, ndur: double;
   buf: PByte;
   proc: TProcessUTF8;
@@ -1987,6 +2038,7 @@ var
   stream: TStringStream;
   bTimeSeek, bRange: boolean;
   range1, range2: Int64;
+  time1, time2: LongWord;
 begin
   Result:= False;
   UniOutput:= True;
@@ -2001,7 +2053,12 @@ begin
         ini.ReadSections(sl);
         ini.ReadSectionRaw(sl[sno], sl);
         cmd:= StringReplace(sl.Text, CRLF, ' ', [rfReplaceAll]);
-        exec:= LowerCase(Fetch(cmd, ' '));
+        exec:= Trim(LowerCase(Fetch(cmd, ' ')));
+        if exec = '' then begin
+          // トランスコードをせず通常のストリーミング再生をする
+          Result:= DoPlay(fname, request);
+          Exit;
+        end;
       finally
         ini.Free;
         stream.Free;
@@ -2091,6 +2148,13 @@ begin
       Line:= line + GetLineHeader + 'STREAM sent' + CRLF + fname + CRLF + CRLF;
       Synchronize(@AddLog);
 
+      s_wait:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'STREAM_WAIT', 0);
+      lua_getfield(L_S, LUA_GLOBALSINDEX, 'STREAM_WAIT');
+      if lua_isnumber(L_S, -1) then s_wait:= lua_tointeger(L_S, -1);
+      lua_pop(L_S, 1);
+      if (s_wait < 0) or (s_wait > 10000) then s_wait:= 0;
+
+      time1:= LCLIntf.GetTickCount;
       buf_size:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'STREAM_BUFFER_SIZE', 10);
       if buf_size < 1 then buf_size:= 1;
       if buf_size > 1800 then buf_size:= 1800;
@@ -2186,6 +2250,10 @@ begin
                 SendRaw(LowerCase(IntToHex(i, 1)) + CRLF);
                 SendRaw(buf, i);
                 SendRaw(CRLF);
+                time2:= LCLIntf.GetTickCount;
+                if (s_wait > 0) and (time2 - time1 < s_wait) then
+                  Sleep(s_wait - (time2 - time1));
+                time1:= time2;
               end;
               if (Sock.LastError <> 0) or (errc > 5000) or Terminated then begin
                 proc.Terminate(-1);
@@ -2206,6 +2274,10 @@ begin
                 SendRaw(buf, i);
                 SendRaw(CRLF);
                 if Sock.LastError <> 0 then Break;
+                time2:= LCLIntf.GetTickCount;
+                if (s_wait > 0) and (time2 - time1 < s_wait) then
+                  Sleep(s_wait - (time2 - time1));
+                time1:= time2;
               end;
             end;
           finally
@@ -2259,7 +2331,7 @@ end;
 procedure TSSDPDaemon.Execute;
 var
   sendSock: TUDPBlockSocket;
-  myip, s, addr: String;
+  s, addr: String;
   L: Plua_State;
 begin
   try
@@ -2269,7 +2341,7 @@ begin
     if Sock.LastError <> 0 then Raise Exception.Create(Sock.LastErrorDesc);
     Sock.AddMulticast('239.255.255.250');
     if Sock.LastError <> 0 then Raise Exception.Create(Sock.LastErrorDesc);
-    myip:= Sock.ResolveName(Sock.LocalName);
+    if MyIPAddr = '' then MyIPAddr:= Sock.ResolveName(Sock.LocalName);
     L:= lua_newstate(@alloc, nil);
     try
       InitLua(L);
@@ -2280,19 +2352,20 @@ begin
             sendSock:= TUDPBlockSocket.Create;
             try
               try
+                sendSock.Family:= SF_IP4;
                 sendSock.CreateSocket();
                 if sendSock.LastError <> 0 then Raise Exception.Create(sendSock.LastErrorDesc);
                 sendSock.Bind('0.0.0.0', '0');
                 if sendSock.LastError <> 0 then Raise Exception.Create(sendSock.LastErrorDesc);
                 addr:= Sock.GetRemoteSinIP;
-                if addr <> myip then begin
+                if addr <> MyIPAddr then begin
                   sendSock.Connect(addr, IntToStr(Sock.GetRemoteSinPort));
                   if sendSock.LastError <> 0 then Raise Exception.Create(sendSock.LastErrorDesc);
                   s:=
                    'HTTP/1.1 200 OK' + CRLF +
                    'CACHE-CONTROL: max-age=2100' + CRLF +
                    'DATE: ' + Rfc822DateTime(now) + CRLF +
-                   'LOCATION: http://' + myip + ':' + DAEMON_PORT +
+                   'LOCATION: http://' + MyIPAddr + ':' + DAEMON_PORT +
                      '/desc.xml' + CRLF +
                    'SERVER: ' + HTTP_HEAD_SERVER + CRLF +
                    //'ST: upnp:rootdevice'+ CRLF +
@@ -2475,6 +2548,7 @@ begin
 
     // 待機
     if not Terminated and (PriorityList.Count = 0) then Suspended:= True;
+    //while not Terminated and (PriorityList.Count = 0) do Sleep(1000); // Best for Linux?
   end;
 end;
 
@@ -2675,6 +2749,7 @@ initialization
   TempPath:= iniFile.ReadString(INI_SEC_SYSTEM, 'TEMP_DIR', '');
   if TempPath = '' then TempPath:= ExecPath + 'temp';
   TempPath:= IncludeTrailingPathDelimiter(TempPath);
+  MyIPAddr:= '';
   TrayIcon:= TTrayIcon.Create(nil);
   InitTrayIcon;
   MyApp:= TMyApp.Create;
