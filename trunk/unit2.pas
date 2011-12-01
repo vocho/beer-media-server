@@ -453,6 +453,7 @@ begin
           s:= GetInfo2(mi, Stream_Video, main_v, 'Format');
           sl.Add('Video;Format=' + s);
           if s <> '' then begin
+            sl.Add('Video;Format_Profile=' + GetInfo2(mi, Stream_Video, main_v, 'Format_Profile'));
             sl.Add('Video;Width=' + GetInfo2(mi, Stream_Video, main_v, 'Width'));
             sl.Add('Video;Height=' + GetInfo2(mi, Stream_Video, main_v, 'Height'));
             sl.Add('Video;Duration=' + GetInfo2(mi, Stream_Video, main_v, 'Duration/String3'));
@@ -462,6 +463,7 @@ begin
             sl.Add('Video;Standard=' + GetInfo2(mi, Stream_Video, main_v, 'Standard'));
             sl.Add('Video;CodecID=' + GetInfo2(mi, Stream_Video, main_v, 'CodecID'));
             sl.Add('Video;DisplayAspectRatio=' + GetInfo2(mi, Stream_Video, main_v, 'DisplayAspectRatio'));
+            sl.Add('Video;ID=' + GetInfo2(mi, Stream_Video, main_v, 'ID'));
 
             if SeekTimeStr2Num(sl.Values['General;Duration'])
              < SeekTimeStr2Num(sl.Values['Video;Duration']) then begin
@@ -476,6 +478,7 @@ begin
             sl.Add('Audio;Channels=' + GetInfo2(mi, Stream_Audio, main_v, 'Channel(s)'));
             sl.Add('Audio;BitRate=' + GetInfo2(mi, Stream_Audio, main_v, 'BitRate'));
             sl.Add('Audio;SamplingRate=' + GetInfo2(mi, Stream_Audio, main_v, 'SamplingRate'));
+            sl.Add('Audio;ID=' + GetInfo2(mi, Stream_Audio, main_v, 'ID'));
           end;
 
           {
