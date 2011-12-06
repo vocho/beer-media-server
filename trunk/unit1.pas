@@ -15,7 +15,7 @@ uses
 const
   APP_NAME = 'BEER Media Server';
   SHORT_APP_NAME = 'BMS';
-  APP_VERSION = '1.2.111201';
+  APP_VERSION = '1.2.111207';
   SHORT_APP_VERSION = '1.2';
 
 type
@@ -117,7 +117,7 @@ type
     Headers: TStringListUTF8;
     InputData, OutputData: TMemoryStream;
     UniOutput: boolean;
-    InHeader, ScriptFileName: string;
+    InHeader: string;
     constructor Create(hsock: TSocket);
     destructor Destroy; override;
     procedure Execute; override;
@@ -173,6 +173,7 @@ type
     FullInfoCount: integer;
     CurFileList: TStringList;
     LastAccTime: TDateTime;
+    ScriptFileName: string;
     constructor Create;
     destructor Destroy; override;
   end;
@@ -691,12 +692,13 @@ end;
 procedure TMyApp.WMPowerBoadcast(var msg: TMessage);
 begin
   case msg.WParam of
-    $0004{PBT_APMSUSPEND}: begin
-      MyApp.AddLog('*** GO TO SLEEP...'+CRLF+CRLF);
+    $0004{PBT_APMSUSPEND}, $0005{PBT_APMSTANDBY}: begin
+      MyApp.AddLog(GetLineHeader + ' GO TO SLEEP...' + CRLF + CRLF);
       SendByebye();
     end;
-    $0007{PBT_APMRESUMESUSPEND}: begin
-      MyApp.AddLog('*** WAKE UP!!!'+ CRLF+CRLF);
+    // $0007{PBT_APMRESUMESUSPEND}, $0008{PBT_APMRESUMESTANDBY}: begin
+    $0012{PBT_APMRESUMEAUTOMATIC}: begin
+      MyApp.AddLog(GetLineHeader + ' WAKE UP!!!' + CRLF + CRLF);
       SendAlive; // alive
       thHTTPDaemon.SendAliveFlag:= True;
     end;
@@ -886,7 +888,7 @@ begin
 
   except
     on e: Exception do begin
-      line:= '*** ERROR HTTPD : ' + e.Message + CRLF;
+      line:= '*** ERROR HTTPD : ' + e.Message + CRLF + CRLF;
       Synchronize(@AddLog);
     end;
   end;
@@ -957,6 +959,8 @@ begin
         if Terminated then Break;
         try
           //read request header
+          line:= line + GetLineHeader + Format('%s:%d Read Request.',
+           [cIP, cPort]) + CRLF + CRLF;
           rcv:= '';
           size := -1;
           close := false;
@@ -984,15 +988,21 @@ begin
           if Pos('HTTP/', protocol) <> 1 then Exit;
           if Pos('HTTP/1.1', protocol) <> 1 then close := true;
 
-          lua_getfield(L_S, LUA_GLOBALSINDEX, 'GetScriptFileName');
-          lua_pushstring(L_S, InHeader);
-          lua_pushstring(L_S, Sock.GetRemoteSinIP);
-          CallLua(L_S, 2, 1);
-          ScriptFileName:= lua_tostring(L_S, -1);
-          lua_pop(L_S, 1);
+          if (uri = '/desc.xml') or (ClientInfo.ScriptFileName = '') then begin
+            lua_getfield(L_S, LUA_GLOBALSINDEX, 'GetScriptFileName');
+            lua_pushstring(L_S, InHeader);
+            lua_pushstring(L_S, Sock.GetRemoteSinIP);
+            lua_pushstring(L_S, uri);
+            CallLua(L_S, 3, 1);
+            ClientInfo.ScriptFileName:= lua_tostring(L_S, -1);
+            lua_pop(L_S, 1);
 
-          if ScriptFileName <> '' then begin
-            LoadLua(L_S, ScriptFileName);
+            if ClientInfo.ScriptFileName <> '' then
+              line:= line + '*** ScriptName = ' + ClientInfo.ScriptFileName + CRLF + CRLF;
+          end;
+
+          if ClientInfo.ScriptFileName <> '' then begin
+            LoadLua(L_S, ClientInfo.ScriptFileName);
             CallLua(L_S, 0, 0);
           end;
 
@@ -1011,6 +1021,9 @@ begin
           end;
 
           if Terminated then Break;
+
+          line:= line + GetLineHeader + Format('%s:%d Sent Response.',
+           [cIP, cPort]) + CRLF + CRLF;
 
           UniOutput:= False;
           Headers.Clear;
@@ -1039,7 +1052,7 @@ begin
               Headers.Add('Date: ' + Rfc822DateTime(now));
               Headers.Add('Server: ' + HTTP_HEAD_SERVER);
               Headers.Add('');
-              for i:= 0 to Headers.count - 1 do begin
+              for i:= 0 to Headers.Count - 1 do begin
                 if Terminated then Break;
                 Sock.SendString(Headers[i] + CRLF);
                 if Sock.LastError <> 0 then Exit;
@@ -1071,12 +1084,11 @@ begin
       OutputData.Free;
       line:= '';
       InHeader:= '';
-      ScriptFileName:= '';
       Done:= True;
     end;
   except
     on e: Exception do begin
-      line:= line + '*** ERROR HTTPT: ' + e.Message + CRLF;
+      line:= line + '*** ERROR HTTPT: ' + e.Message + CRLF + CRLF;
       Synchronize(@AddLog);
     end;
   end;
@@ -1165,7 +1177,7 @@ begin
         Result:= 200;
       end;
     end else if Copy(uri, 1, 11) = '/playmedia/' then begin
-      if ScriptFileName = '' then Exit;
+      if ClientInfo.ScriptFileName = '' then Exit;
       Headers.Clear;
 
       //s:= DecodeTriplet(Copy(uri, 12, Length(uri)), '%');
@@ -1175,7 +1187,7 @@ begin
 
       Result:= 200;
     end else if Copy(uri, 1, 12) = '/playmedia2/' then begin
-      if ScriptFileName = '' then Exit;
+      if ClientInfo.ScriptFileName = '' then Exit;
       Headers.Clear;
 
       //s:= DecodeTriplet(Copy(uri, 13, Length(uri)), '%');
@@ -1188,7 +1200,7 @@ begin
     end;
 
   end else if request = 'POST' then begin
-    if ScriptFileName = '' then Exit;
+    if ClientInfo.ScriptFileName = '' then Exit;
     if uri = '/upnp/control/content_directory' then begin
       Headers.Clear;
       Headers.Add('Content-Type: text/xml; charset="utf-8"');
@@ -1303,7 +1315,7 @@ function THttpThrd.DoGetTranscodeCommand(const fname: string): string;
       for i:= 0 to mi.Count-1 do begin
         MIValue2LuaTable(L, mi[i]);
       end;
-      lua_pushstring(L, ScriptFileName); // ScriptFileName
+      lua_pushstring(L, ClientInfo.ScriptFileName); // ScriptFileName
       CallLua(L, 3, 1);
     finally
       if mi.IsTemp then mi.Free;
@@ -1507,7 +1519,7 @@ var
       if (sl[i][1] = #$F) and (i >= ClientInfo.FullInfoCount) then begin
         mi:= thMIC.GetMediaInfo(Copy(sl[i], 2, MaxInt));
         try
-          s:= mi.GetMimeType(L_S, ScriptFileName, True);
+          s:= mi.GetMimeType(L_S, ClientInfo.ScriptFileName, True);
           if s <> '' then begin
             if Pos(':::TRANS:::', s) > 0 then begin
               if sl.Sorted then begin
@@ -1678,7 +1690,7 @@ begin
         Fetch(fn, #$09);
         mi:= thMIC.GetMediaInfo(fn);
         try
-          mt:= mi.GetMimeType(L_S, ScriptFileName);
+          mt:= mi.GetMimeType(L_S, ClientInfo.ScriptFileName);
           mt:= Fetch(mt, ':::');
 
           m:= ' protocolInfo="http-get:*:' + mt + '"';
@@ -1751,7 +1763,7 @@ begin
 
           mi:= thMIC.GetMediaInfo(fn);
           try
-            mt:= mi.GetMimeType(L_S, ScriptFileName);
+            mt:= mi.GetMimeType(L_S, ClientInfo.ScriptFileName);
             mt:= Fetch(mt, ':::');
 
             m:= ' protocolInfo="http-get:*:';
@@ -1761,7 +1773,7 @@ begin
               m:= m + 'text/plain:*';
             m:= m + '"';
 
-            i64:= unit2.GetFileSize(fn);
+            i64:= mi.FileSize;
             if i64 > 0 then
               m:= m + ' size="' + IntToStr(i64) + '"';
 
@@ -1890,185 +1902,182 @@ begin
   h:= TStringListUTF8.Create;
   mi:= thMIC.GetMediaInfo(fname);
   try
-    cf:= mi.GetMimeType(L_S, ScriptFileName);
+    cf:= mi.GetMimeType(L_S, ClientInfo.ScriptFileName);
     ct:= Fetch(cf, ':');
     cf:= Fetch(cf, ':::');
+
+    now_rec:= mi.Values['General;Format'] = 'NowRecording';
+    if now_rec then
+      fs:= TFileStreamUTF8.Create(fname, fmOpenRead or fmShareDenyNone)
+    else
+      fs:= TFileStreamUTF8.Create(fname, fmOpenRead or fmShareDenyWrite);
     try
-      now_rec:= mi.Values['General;Format'] = 'NowRecording';
-      if now_rec then
-        fs:= TFileStreamUTF8.Create(fname, fmOpenRead or fmShareDenyNone)
-      else
-        fs:= TFileStreamUTF8.Create(fname, fmOpenRead or fmShareDenyWrite);
-      try
-        fsize:= unit2.GetFileSize(fname){fs.Size};
-        iseek1:= 0; isize:= fsize;
-        nseek1:= 0; nseek2:= 0;
-        dur:= mi.Values['General;Duration'];
-        if now_rec then begin
-          dur:= '20:00:00.000'; // 20時間のファイルと仮定する
-          isize:= 200 * 1024 * 1024 * 1024; // 200GBのファイルと仮定
+      fsize:= unit2.GetFileSize(fname){fs.Size};
+      iseek1:= 0; isize:= fsize;
+      nseek1:= 0; nseek2:= 0;
+      dur:= mi.Values['General;Duration'];
+      if now_rec then begin
+        dur:= '20:00:00.000'; // 20時間のファイルと仮定する
+        isize:= 200 * 1024 * 1024 * 1024; // 200GBのファイルと仮定
+      end;
+      ndur:= SeekTimeStr2Num(dur);
+      i:= Pos('TIMESEEKRANGE.DLNA.ORG:', UpperCase(InHeader));
+      bTimeSeek:= i > 0;
+      if bTimeSeek then begin
+        if ndur = 0 then begin
+          // TIMESEEKRANGEは使えませんと答える
+          // (DLNA Interoperability Guidelines v1.0 - 7.8.22.7)
+          Sock.SendString('HTTP/1.1 406 Not Acceptable' + CRLF + CRLF);
+          Exit;
         end;
-        ndur:= SeekTimeStr2Num(dur);
-        i:= Pos('TIMESEEKRANGE.DLNA.ORG:', UpperCase(InHeader));
-        bTimeSeek:= i > 0;
-        if bTimeSeek then begin
-          if ndur = 0 then begin
-            // TIMESEEKRANGEは使えませんと答える
-            // (DLNA Interoperability Guidelines v1.0 - 7.8.22.7)
-            Sock.SendString('HTTP/1.1 406 Not Acceptable' + CRLF + CRLF);
-            Exit;
-          end;
-          s:= Copy(InHeader, i+23, Length(InHeader));
-          s:= Trim(Fetch(s, CR));
-          Fetch(s, '=');
-          seek2:= Trim(s);
-          seek1:= Fetch(seek2, '-');
-          nseek1:= SeekTimeStr2Num(seek1);
-          nseek2:= SeekTimeStr2Num(seek2);
-          if (nseek1 <> 0) or (nseek2 <> 0) then begin
-            if now_rec then begin
-              // 録画中のファイルは20Mbpsであると仮定
-              iseek1:= Trunc(nseek1 / 1000 * 20 * 1024 * 1024 / 8);
-              if nseek2 >= nseek1 then begin
-                isize:= Trunc(nseek2 / 1000 * 20 * 1024 * 1024 / 8) - iseek1 + 1;
-                if iseek1 + isize + OKKAKE_SPACE > fsize then begin
-                  iseek1:= fsize - OKKAKE_SPACE - isize;
-                end;
-              end else begin
-                if iseek1 + OKKAKE_SPACE >= fsize then iseek1:= fsize - OKKAKE_SPACE;
+        s:= Copy(InHeader, i+23, Length(InHeader));
+        s:= Trim(Fetch(s, CR));
+        Fetch(s, '=');
+        seek2:= Trim(s);
+        seek1:= Fetch(seek2, '-');
+        nseek1:= SeekTimeStr2Num(seek1);
+        nseek2:= SeekTimeStr2Num(seek2);
+        if (nseek1 <> 0) or (nseek2 <> 0) then begin
+          if now_rec then begin
+            // 録画中のファイルは20Mbpsであると仮定
+            iseek1:= Trunc(nseek1 / 1000 * 20 * 1024 * 1024 / 8);
+            if nseek2 >= nseek1 then begin
+              isize:= Trunc(nseek2 / 1000 * 20 * 1024 * 1024 / 8) - iseek1 + 1;
+              if iseek1 + isize + OKKAKE_SPACE > fsize then begin
+                iseek1:= fsize - OKKAKE_SPACE - isize;
               end;
-              if iseek1 < 0 then iseek1:= 0;
             end else begin
-              iseek1:= Trunc(fsize / ndur * nseek1);
-              if nseek2 >= nseek1 then begin
-                isize:= Trunc(fsize / ndur * nseek2) - iseek1 + 1;
-              end else begin
-                isize:= fsize - iseek1;
-              end;
+              if iseek1 + OKKAKE_SPACE >= fsize then iseek1:= fsize - OKKAKE_SPACE;
+            end;
+            if iseek1 < 0 then iseek1:= 0;
+          end else begin
+            iseek1:= Trunc(fsize / ndur * nseek1);
+            if nseek2 >= nseek1 then begin
+              isize:= Trunc(fsize / ndur * nseek2) - iseek1 + 1;
+            end else begin
+              isize:= fsize - iseek1;
             end;
           end;
         end;
-
-        range1:= 0; range2:= fsize - 1;
-        i:= Pos('RANGE:', UpperCase(InHeader));
-        bRange:= i > 0;
-        if bRange then begin
-          s:= Copy(InHeader, i+6, Length(InHeader));
-          Fetch(s, '=');
-          range1:= StrToInt64Def(Fetch(s, '-'), 0);
-          iseek1:= range1;
-          if now_rec then begin
-            if iseek1 + OKKAKE_SPACE >= fsize then iseek1:= fsize - OKKAKE_SPACE;
-          end;
-          range2:= StrToInt64Def(Fetch(s, CR), fsize-1);
-          isize:= range2 - range1 + 1;
-        end;
-
-        h.Add('HTTP/1.1 200 OK');
-        h.Add('TransferMode.DLNA.ORG: Streaming');
-        h.Add('Content-Type: ' + ct);
-        h.Add('ContentFeatures.DLNA.ORG: ' + cf);
-        h.Add('Accept-Ranges: bytes');
-        h.Add('Connection: keep-alive');
-        h.Add('Server: ' + HTTP_HEAD_SERVER);
-        if now_rec then
-          h.Add('Transfer-Encoding: chunked')
-        else
-          h.Add('Content-length: ' + IntToStr(isize));
-
-        if nseek2 > 0 then
-          s:= SeekTimeNum2Str(nseek2)
-        else
-          s:= SeekTimeNum2Str(ndur);
-        ts_range:= SeekTimeNum2Str(nseek1) + '-' + s + '/' + dur;
-        range:= Format('%d-%d/%d', [range1, range2, fsize]);
-        if bTimeSeek then begin
-          //s:= 'npt=' + ts_range + ' bytes=' + range;
-          s:= 'npt=' + ts_range;
-          h.Add('TimeSeekRange.dlna.org: ' + s);
-          h.Add('X-Seek-Range: ' + s);
-        end else if bRange then begin
-          h.Add('Content-Range: bytes ' + range);
-        end;
-        h.Add('');
-        for i:= 0 to h.Count - 1 do begin
-          Sock.SendString(h[i] + CRLF);
-          if Sock.LastError <> 0 then Exit;
-          Line:= Line + h[i] + CRLF;
-        end;
-        Line:= Line + CRLF;
-
-        if UpperCase(request) <> 'HEAD' then begin
-          Line:= line + GetLineHeader + 'STREAM sent' + CRLF + fname + CRLF + CRLF;
-          Synchronize(@AddLog);
-
-          if now_rec then begin
-            // 余白分が溜まるまで待つ
-            while not Terminated and Sock.CanWrite(1*60*1000) do begin
-              fsize:= unit2.GetFileSize(fname);
-              if fsize > OKKAKE_SPACE then Break;
-              Sleep(100);
-            end;
-          end;
-
-          s_wait:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'STREAM_WAIT', 0);
-          lua_getfield(L_S, LUA_GLOBALSINDEX, 'STREAM_WAIT');
-          if lua_isnumber(L_S, -1) then s_wait:= lua_tointeger(L_S, -1);
-          lua_pop(L_S, 1);
-          if (s_wait < 0) or (s_wait > 10000) then s_wait:= 0;
-
-          time1:= LCLIntf.GetTickCount;
-          buf_size:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'STREAM_BUFFER_SIZE', 10);
-          if buf_size < 1 then buf_size:= 1;
-          if buf_size > 1800 then buf_size:= 1800;
-          buf_size:= buf_size * 1024 * 1024;
-          buf:= GetMem(buf_size);
-          try
-            fs.Position:= iseek1;
-            while (isize > 0) and not Terminated do begin
-              if isize < buf_size then buf_size:= isize;
-              i:= fs.Read(buf^, buf_size);
-              if i = 0 then begin
-                if now_rec then begin
-                  Sleep(5000);
-                  i:= fs.Read(buf^, buf_size);
-                  if i = 0 then begin
-                    //Sock.SendString('0' + CRLF + CRLF);
-                    SendRaw('0' + CRLF + CRLF);
-                    Break; // 5秒待っても増えないのでたぶん録画終了
-                  end;
-                end else
-                  Break;
-              end;
-              if now_rec then SendRaw(LowerCase(IntToHex(i, 1)) + CRLF);
-              //Sock.SendBuffer(buf, i);
-              SendRaw(buf, i);
-              if now_rec then SendRaw(CRLF);
-              if Sock.LastError <> 0 then Exit;
-              time2:= LCLIntf.GetTickCount;
-              if (s_wait > 0) and (time2 - time1 < s_wait) then
-                Sleep(s_wait - (time2 - time1));
-              time1:= time2;
-              Dec(isize, i);
-            end;
-          finally
-            FreeMem(buf);
-          end;
-
-          Line:= GetLineHeader + 'STREAM fin' + CRLF +
-           fname + CRLF + CRLF;
-        end;
-      finally
-        fs.Free;
       end;
 
-      Result:= True;
-    except
+      range1:= 0; range2:= fsize - 1;
+      i:= Pos('RANGE:', UpperCase(InHeader));
+      bRange:= i > 0;
+      if bRange then begin
+        s:= Copy(InHeader, i+6, Length(InHeader));
+        Fetch(s, '=');
+        range1:= StrToInt64Def(Fetch(s, '-'), 0);
+        iseek1:= range1;
+        if now_rec then begin
+          if iseek1 + OKKAKE_SPACE >= fsize then iseek1:= fsize - OKKAKE_SPACE;
+        end;
+        range2:= StrToInt64Def(Fetch(s, CR), fsize-1);
+        isize:= range2 - range1 + 1;
+      end;
+
+      h.Add('HTTP/1.1 200 OK');
+      h.Add('TransferMode.DLNA.ORG: Streaming');
+      h.Add('Content-Type: ' + ct);
+      h.Add('ContentFeatures.DLNA.ORG: ' + cf);
+      h.Add('Accept-Ranges: bytes');
+      h.Add('Connection: keep-alive');
+      h.Add('Server: ' + HTTP_HEAD_SERVER);
+      if now_rec then
+        h.Add('Transfer-Encoding: chunked')
+      else
+        h.Add('Content-length: ' + IntToStr(isize));
+
+      if nseek2 > 0 then
+        s:= SeekTimeNum2Str(nseek2)
+      else
+        s:= SeekTimeNum2Str(ndur);
+      ts_range:= SeekTimeNum2Str(nseek1) + '-' + s + '/' + dur;
+      range:= Format('%d-%d/%d', [range1, range2, fsize]);
+      if bTimeSeek then begin
+        //s:= 'npt=' + ts_range + ' bytes=' + range;
+        s:= 'npt=' + ts_range;
+        h.Add('TimeSeekRange.dlna.org: ' + s);
+        h.Add('X-Seek-Range: ' + s);
+      end else if bRange then begin
+        h.Add('Content-Range: bytes ' + range);
+      end;
+      h.Add('');
+      for i:= 0 to h.Count - 1 do begin
+        Sock.SendString(h[i] + CRLF);
+        if Sock.LastError <> 0 then Exit;
+        Line:= Line + h[i] + CRLF;
+      end;
+      Line:= Line + CRLF;
+
+      if UpperCase(request) <> 'HEAD' then begin
+        Line:= line + GetLineHeader + 'STREAM sent' + CRLF + fname + CRLF + CRLF;
+        Synchronize(@AddLog);
+
+        if now_rec then begin
+          // 余白分が溜まるまで待つ
+          while not Terminated and Sock.CanWrite(1*60*1000) do begin
+            fsize:= unit2.GetFileSize(fname);
+            if fsize > OKKAKE_SPACE then Break;
+            Sleep(100);
+          end;
+        end;
+
+        s_wait:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'STREAM_WAIT', 0);
+        lua_getfield(L_S, LUA_GLOBALSINDEX, 'STREAM_WAIT');
+        if lua_isnumber(L_S, -1) then s_wait:= lua_tointeger(L_S, -1);
+        lua_pop(L_S, 1);
+        if (s_wait < 0) or (s_wait > 10000) then s_wait:= 0;
+
+        time1:= LCLIntf.GetTickCount;
+        buf_size:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'STREAM_BUFFER_SIZE', 10);
+        if buf_size < 1 then buf_size:= 1;
+        if buf_size > 1800 then buf_size:= 1800;
+        buf_size:= buf_size * 1024 * 1024;
+        buf:= GetMem(buf_size);
+        try
+          fs.Position:= iseek1;
+          while (isize > 0) and not Terminated do begin
+            if isize < buf_size then buf_size:= isize;
+            i:= fs.Read(buf^, buf_size);
+            if i = 0 then begin
+              if now_rec then begin
+                Sleep(5000);
+                i:= fs.Read(buf^, buf_size);
+                if i = 0 then begin
+                  //Sock.SendString('0' + CRLF + CRLF);
+                  SendRaw('0' + CRLF + CRLF);
+                  Break; // 5秒待っても増えないのでたぶん録画終了
+                end;
+              end else
+                Break;
+            end;
+            if now_rec then SendRaw(LowerCase(IntToHex(i, 1)) + CRLF);
+            //Sock.SendBuffer(buf, i);
+            SendRaw(buf, i);
+            if now_rec then SendRaw(CRLF);
+            if Sock.LastError <> 0 then Exit;
+            time2:= LCLIntf.GetTickCount;
+            if (s_wait > 0) and (time2 - time1 < s_wait) then
+              Sleep(s_wait - (time2 - time1));
+            time1:= time2;
+            Dec(isize, i);
+          end;
+        finally
+          FreeMem(buf);
+        end;
+
+        Line:= GetLineHeader + 'STREAM fin' + CRLF +
+         fname + CRLF + CRLF;
+      end;
+    finally
+      fs.Free;
     end;
   finally
     h.Free;
     if mi.IsTemp then mi.Free;
   end;
+  Result:= True;
 end;
 
 function THttpThrd.DoPlayTranscode(sno: integer; const fname, request: string): boolean;
@@ -2100,7 +2109,7 @@ begin
       ini:= TIniFile.Create(stream);
       try
         ini.ReadSections(sl);
-        ini.ReadSectionRaw(sl[sno], sl);
+        ini.ReadSectionRaw(sl[sno], sl); // List index (sno) out of bounds エラーとなる可能性あり
         cmd:= StringReplace(sl.Text, CRLF, ' ', [rfReplaceAll]);
         exec:= Trim(LowerCase(Fetch(cmd, ' ')));
         KeepMode:= 0;
@@ -2127,7 +2136,7 @@ begin
       sl.Free;
     end;
 
-    cf:= mi.GetMimeType(L_S, ScriptFileName);
+    cf:= mi.GetMimeType(L_S, ClientInfo.ScriptFileName);
     ct:= Fetch(cf, ':');
     cf:= Fetch(cf, ':::');
     nseek1:= 0; nseek2:= 0;
@@ -2464,6 +2473,7 @@ begin
     h.Free;
     if mi.IsTemp then mi.Free;
   end;
+  Result:= True;
 end;
 
 { TSSDPDaemon }
@@ -2539,12 +2549,12 @@ begin
 
                   sendSock.SendString(s);
                   if sendSock.LastError <> 0 then Raise Exception.Create(sendSock.LastErrorDesc);
-                  line:= GetLineHeader + addr + '  SSDP Sent for M-SEARCH' + CRLF{ + s + CRLF};
+                  line:= GetLineHeader + addr + '  SSDP Sent for M-SEARCH' + CRLF + CRLF;
                   Synchronize(@AddLog);
                 end;
               except
                 on e: Exception do begin
-                  line:= '*** ERROR SSDP Sent: ' + e.Message + CRLF;
+                  line:= '*** ERROR SSDP Sent: ' + e.Message + CRLF + CRLF;
                   Synchronize(@AddLog);
                 end;
               end;
@@ -2554,7 +2564,7 @@ begin
           end;
         end else begin
           if Sock.LastError <> WSAETIMEDOUT then begin
-            line:= '*** ERROR SSDP Recv : ' + Sock.LastErrorDesc + CRLF;
+            line:= '*** ERROR SSDP Recv : ' + Sock.LastErrorDesc + CRLF + CRLF;
             Synchronize(@AddLog);
           end;
         end;
@@ -2564,7 +2574,7 @@ begin
     end;
   except
     on e: Exception do begin
-      line:= '*** ERROR SSDP : ' + e.Message + CRLF;
+      line:= '*** ERROR SSDP : ' + e.Message + CRLF + CRLF;
       Synchronize(@AddLog);
     end;
   end;
