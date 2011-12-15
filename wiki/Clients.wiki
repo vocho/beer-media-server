@@ -8,5 +8,5 @@
  * iPhone 4 用 Media Link Player Lite 1.1.9
 
 == ユーザーから情報提供があったもの ==
- * SONY Bravia KDL-32J5、KDL-40F5、KDL-40EX500、KDL-□□EX700、KDL-40HX800、KDL-40NX800、KDL-32CX400、KDL-□□W5000、KDL-□□J3000
+ * SONY Bravia KDL-32J5、KDL-40F5、KDL-40EX500、KDL-□□EX700、KDL-40HX800、KDL-40NX800、KDL-32CX400、KDL-□□W5000、KDL-□□J3000、KDL-40HX720
  * REGZA　「DLNAサーバーを認識することを確認」「ファイル名の表示を確認」とのことですので、REGZA専用スクリプトを誰かが作成してくれれば動きそう。
