@@ -17,6 +17,7 @@ type
   public
   end;
 
+procedure SleepThread(h: THandle; ms: integer);
 function DecodeX(const s: string): string;
 function EncodeX(const s: string): string;
 function GetFileSize(const fname: string): Int64;
@@ -48,6 +49,15 @@ begin
     Result:= CompareStr(s1, s2)
   else
     Result:= CompareText(s1, s2);
+end;
+
+procedure SleepThread(h: THandle; ms: integer);
+begin
+{$IFDEF Win32}
+  WaitForSingleObject(h, ms);
+{$ELSE}
+  Sleep(ms);
+{$ENDIF}
 end;
 
 function EncodeX(const s: string): string;
@@ -464,6 +474,7 @@ begin
             sl.Add('Video;CodecID=' + GetInfo2(mi, Stream_Video, main_v, 'CodecID'));
             sl.Add('Video;DisplayAspectRatio=' + GetInfo2(mi, Stream_Video, main_v, 'DisplayAspectRatio'));
             sl.Add('Video;ID=' + GetInfo2(mi, Stream_Video, main_v, 'ID'));
+            sl.Add('Video;ScanType=' + GetInfo2(mi, Stream_Video, main_v, 'ScanType'));
 
             if SeekTimeStr2Num(sl.Values['General;Duration'])
              < SeekTimeStr2Num(sl.Values['Video;Duration']) then begin
