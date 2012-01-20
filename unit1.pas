@@ -15,7 +15,7 @@ uses
 const
   APP_NAME = 'BEER Media Server';
   SHORT_APP_NAME = 'BMS';
-  APP_VERSION = '1.2.111207';
+  APP_VERSION = '1.2.120121';
   SHORT_APP_VERSION = '1.2';
 
 type
@@ -2019,7 +2019,7 @@ begin
           while not Terminated and Sock.CanWrite(1*60*1000) do begin
             fsize:= unit2.GetFileSize(fname);
             if fsize > OKKAKE_SPACE then Break;
-            Sleep(100);
+            SleepThread(Handle, 100);
           end;
         end;
 
@@ -2042,7 +2042,7 @@ begin
             i:= fs.Read(buf^, buf_size);
             if i = 0 then begin
               if now_rec then begin
-                Sleep(5000);
+                SleepThread(Handle, 5000);
                 i:= fs.Read(buf^, buf_size);
                 if i = 0 then begin
                   //Sock.SendString('0' + CRLF + CRLF);
@@ -2059,7 +2059,7 @@ begin
             if Sock.LastError <> 0 then Exit;
             time2:= LCLIntf.GetTickCount;
             if (s_wait > 0) and (time2 - time1 < s_wait) then
-              Sleep(s_wait - (time2 - time1));
+              SleepThread(Handle, s_wait - (time2 - time1));
             time1:= time2;
             Dec(isize, i);
           end;
@@ -2334,7 +2334,7 @@ begin
             proc.Options:= [poNoConsole];
             proc.Execute;
             while proc.Running and not FileExistsUTF8(tmp_fname) do begin
-              Sleep(100);
+              SleepThread(Handle, 100);
             end;
 
             if not FileExistsUTF8(tmp_fname) then begin
@@ -2348,7 +2348,7 @@ begin
                   line := line + StrPas(PChar(buf));
                   if Length(line) > 1024 then Synchronize(@AddLog);
                 end else begin
-                  Sleep(100);
+                  SleepThread(Handle, 100);
                 end;
               end;
               while True do begin
@@ -2367,7 +2367,7 @@ begin
               while proc.Running do begin
                 i:= fs.Read(buf^, buf_size);
                 if i <= 0 then begin
-                  Sleep(1);
+                  SleepThread(Handle, 1);
                   Inc(errc);
                 end else begin
                   errc:= 0;
@@ -2379,7 +2379,7 @@ begin
                   SendRaw(CRLF);
                   time2:= LCLIntf.GetTickCount;
                   if (s_wait > 0) and (time2 - time1 < s_wait) then
-                    Sleep(s_wait - (time2 - time1));
+                    SleepThread(Handle, s_wait - (time2 - time1));
                   time1:= time2;
                 end;
                 if (Sock.LastError <> 0) or (errc > 10000) or Terminated then begin
@@ -2387,7 +2387,7 @@ begin
                 end;
                 if KeepMode = 1 then begin
                   // 送信の優先度は低いので休みながらにして、変換作業を急がせる
-                  Sleep(1000);
+                  SleepThread(Handle, 1000);
                 end;
               end;
               if not proc.Running then begin
@@ -2408,7 +2408,7 @@ begin
                     if Sock.LastError <> 0 then Break;
                     time2:= LCLIntf.GetTickCount;
                     if (s_wait > 0) and (time2 - time1 < s_wait) then
-                      Sleep(s_wait - (time2 - time1));
+                      SleepThread(Handle, s_wait - (time2 - time1));
                     time1:= time2;
                   end;
                 end else begin
@@ -2427,7 +2427,7 @@ begin
                 if DeleteFileUTF8(tmp_fname) then
                   Break
                 else
-                  Sleep(10000);
+                  SleepThread(Handle, 10000);
               end;
             end;
             if (KeepMode <> 0) and (Sock.LastError <> 0) then begin
@@ -2455,7 +2455,7 @@ begin
               SendRaw(CRLF);
               time2:= LCLIntf.GetTickCount;
               if (s_wait > 0) and (time2 - time1 < s_wait) then
-                Sleep(s_wait - (time2 - time1));
+                SleepThread(Handle, s_wait - (time2 - time1));
               time1:= time2;
               if (Sock.LastError <> 0) then Break;
             end;
