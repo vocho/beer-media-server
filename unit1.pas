@@ -15,7 +15,7 @@ uses
 const
   APP_NAME = 'BEER Media Server';
   SHORT_APP_NAME = 'BMS';
-  APP_VERSION = '1.2.120121';
+  APP_VERSION = '1.2.120201';
   SHORT_APP_VERSION = '1.2';
 
 type
@@ -2293,7 +2293,6 @@ begin
           try
             cmd:= StringReplace(cmd, '$_in_$', ExtractShortPathNameUTF8(fname), [rfReplaceAll]);
             cmd:= StringReplace(cmd, '$_out_$', tmp_fname, [rfReplaceAll]);
-            cmd:= '"' + ExecPath + exec + '" ' + cmd;
             if exec = 'mencoder' then begin
               if bTimeSeek then begin
                 if nseek1 <> 0 then begin
@@ -2311,11 +2310,11 @@ begin
               cmd:= cmd + ' -quiet';
             end else if exec = 'ffmpeg' then begin
               if bTimeSeek then begin
-                if nseek1 <> 0 then begin
-                  cmd := cmd + ' -ss ' + SeekTimeNum2Str(nseek1);
-                end;
                 if (nseek2 > nseek1) then begin
-                  cmd := cmd + ' -t ' + SeekTimeNum2Str(nseek2-nseek1);
+                  cmd := ' -t ' + SeekTimeNum2Str(nseek2-nseek1) + ' ' + cmd;
+                end;
+                if nseek1 <> 0 then begin
+                  cmd := ' -ss ' + SeekTimeNum2Str(nseek1) + ' ' + cmd;
                 end;
               end else if bRange then begin
                 // ffmpeg では -sb にあたるのがないので Range Seek　はできなそう
@@ -2330,7 +2329,7 @@ begin
             Line:= GetLineHeader + 'TRANSCODE ' + exec + CRLF + cmd + CRLF + CRLF;
             Synchronize(@AddLog);
 
-            proc.CommandLine:= cmd;
+            proc.CommandLine:= '"' + ExecPath + exec + '" ' + cmd;
             proc.Options:= [poNoConsole];
             proc.Execute;
             while proc.Running and not FileExistsUTF8(tmp_fname) do begin
