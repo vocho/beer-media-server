@@ -47,21 +47,37 @@ begin
   if ParamCount > 0 then DoCommand(1);
 end;
 
+function DeleteEscapeSequence(const s: string): string;
+var
+  i: Integer;
+begin
+  Result:= '';
+  i:= 1;
+  while i <= Length(s) do begin
+    if s[i] = #$1B then begin
+      while (s[i] <> 'm') and (i <= Length(s)) do Inc(i);
+    end else
+      Result:= Result + s[i];
+    Inc(i);
+  end;
+end;
+
 procedure TForm1.doCommand(no: integer);
 var
   cmd: string;
-  ostream: TMemoryStream;
+  ostream: TStringStream;
 begin
   Label1.Caption:= ParamStrUTF8(1);
   Memo1.Lines.BeginUpdate;
   try
     Memo1.Clear;
-    ostream:= TMemoryStream.Create;
+    ostream:= TStringStream.Create('');
     try
       cmd:= '"' + ExecPath + 'mplayer.exe"' +
        ' -speed 100 -vo null -ao null -frames 1 -identify' +
        ' -dvd-device "' + ParamStrUTF8(1) + '" dvd://' + IntToStr(no);
       ExecCommand(cmd, nil, ostream, nil);
+      //Memo1.Lines.Text:= DeleteEscapeSequence(ostream.DataString);
       Memo1.Lines.LoadFromStream(ostream);
     finally
       ostream.Free;

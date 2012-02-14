@@ -259,9 +259,9 @@ begin
        CREATE_DEFAULT_ERROR_MODE{DETACHED_PROCESS},
        nil, nil, StartupInfo, ProcessInfo) = true then
       begin
+        // 入力待ちになるまで待ってから，
+        WaitForInputIdle(ProcessInfo.hProcess, 1000);
         if Assigned(StdIn) then begin
-          // 入力待ちになるまで待ってから，
-          WaitForInputIdle(ProcessInfo.hProcess, 1000);
           StreamBufferSize:= 8192;
           while StreamBufferSize = 8192 do
           begin
@@ -278,25 +278,21 @@ begin
 
             Sleep(50);
 
-            if Assigned(StdOut) then begin
-              // 標準出力パイプの内容を調べる
-              PeekNamedPipe(hReadPipe, nil, 0, nil, @dwStdOut, nil);
-              if (dwStdOut > 0) then
-              begin
-                // 内容が存在すれば、読み取る
-                ReadFile(hReadPipe, bufStdOut{%H-}, Length(bufStdOut) - 1, dwStdOut, nil);
-                StdOut.Write(bufStdOut, dwStdOut);
-              end;
+            // 標準出力パイプの内容を調べる
+            PeekNamedPipe(hReadPipe, nil, 0, nil, @dwStdOut, nil);
+            if (dwStdOut > 0) then
+            begin
+              // 内容が存在すれば、読み取る
+              ReadFile(hReadPipe, bufStdOut{%H-}, Length(bufStdOut) - 1, dwStdOut, nil);
+              if Assigned(StdOut) then StdOut.Write(bufStdOut, dwStdOut);
             end;
 
-            if Assigned(ErrOut) then begin
-              // 同様にエラー出力の処理
-              PeekNamedPipe(hErrReadPipe, nil, 0, nil, @dwErrOut, nil);
-              if (dwErrOut > 0) then
-              begin
-                ReadFile(hErrReadPipe, bufErrOut{%H-}, Length(bufErrOut) - 1, dwErrOut, nil);
-                ErrOut.Write(bufErrOut, dwErrOut);
-              end;
+            // 同様にエラー出力の処理
+            PeekNamedPipe(hErrReadPipe, nil, 0, nil, @dwErrOut, nil);
+            if (dwErrOut > 0) then
+            begin
+              ReadFile(hErrReadPipe, bufErrOut{%H-}, Length(bufErrOut) - 1, dwErrOut, nil);
+              if Assigned(ErrOut) then ErrOut.Write(bufErrOut, dwErrOut);
             end;
 
             dwRet := WaitForSingleObject(ProcessInfo.hProcess, 0);
@@ -419,12 +415,15 @@ begin
     if (fname = '') or not FileExistsUTF8(fname) then Exit;
     s:= LowerCase(ExtractFileExt(fname));
     if (s = '.lua') or (s = '.txt') or  (s = '.m3u') or  (s = '.m3u8') then Exit;
-    if GetFileSize(fname) <= 0 then Exit;
     try
       // 書き込み中のファイルかを調べるため、fmShareDenyWriteで開いてみる
       fs:= TFileStreamUTF8.Create(fname, fmOpenRead or fmShareDenyWrite);
     except
       sl.Add('General;Format=NowRecording');
+      Exit;
+    end;
+    if GetFileSize(fname) <= 0 then begin
+      sl.Add('General;Format=');
       Exit;
     end;
     try
