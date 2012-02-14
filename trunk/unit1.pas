@@ -15,7 +15,7 @@ uses
 const
   APP_NAME = 'BEER Media Server';
   SHORT_APP_NAME = 'BMS';
-  APP_VERSION = '1.2.120201';
+  APP_VERSION = '1.2.120214';
   SHORT_APP_VERSION = '1.2';
 
 type
@@ -307,14 +307,13 @@ begin
   // Sends an advertisement "alive" message on multicast
   sock:= TUDPBlockSocket.Create;
   try
-    Sock.Family:= SF_IP4;
+    sock.Family:= SF_IP4;
     sock.CreateSocket();
-    sock.Bind('0.0.0.0', '0');
+    if MyIPAddr = '' then MyIPAddr:= sock.ResolveName(sock.LocalName);
+    sock.Bind(MyIPAddr{'0.0.0.0'}, '0');
     sock.MulticastTTL:= 1;
     sock.Connect('239.255.255.250', '1900'{SSDP});
     if sock.LastError = 0 then begin
-      if MyIPAddr = '' then MyIPAddr:= Sock.ResolveName(Sock.LocalName);
-
       //{
       s:=
        'NOTIFY * HTTP/1.1' + CRLF +
@@ -404,7 +403,8 @@ begin
   try
     Sock.Family:= SF_IP4;
     sock.CreateSocket();
-    sock.Bind('0.0.0.0', '0');
+    if MyIPAddr = '' then MyIPAddr:= sock.ResolveName(sock.LocalName);
+    sock.Bind(MyIPAddr{'0.0.0.0'}, '0');
     sock.MulticastTTL:= 1;
     sock.Connect('239.255.255.250', '1900'{SSDP});
     if sock.LastError = 0 then begin
@@ -794,7 +794,8 @@ procedure THttpDaemon.Execute;
     if Sock.LastError <> 0 then raise Exception.Create(Sock.LastErrorDesc);
     Sock.SetLinger(True, 10000);
     //Sock.EnableReuse(True);
-    Sock.Bind('0.0.0.0', DAEMON_PORT); // ソケット登録
+    if MyIPAddr = '' then MyIPAddr:= Sock.ResolveName(Sock.LocalName);
+    Sock.Bind(MyIPAddr{'0.0.0.0'}, DAEMON_PORT); // ソケット登録
     if Sock.LastError <> 0 then raise Exception.Create(Sock.LastErrorDesc);
     Sock.Listen; // 接続準備
     if Sock.LastError <> 0 then raise Exception.Create(Sock.LastErrorDesc);
@@ -847,7 +848,6 @@ begin
           th_list.Add(th);
 
           if SendAliveFlag then begin
-            if MyIPAddr = '' then MyIPAddr:= Sock.ResolveName(Sock.LocalName);
             s:= Sock.GetRemoteSinIP;
             if (MyIPAddr <> s) and (s <> '127.0.0.1') then begin
               SendAlive; // 念のため
@@ -959,8 +959,8 @@ begin
         if Terminated then Break;
         try
           //read request header
-          line:= line + GetLineHeader + Format('%s:%d Read Request.',
-           [cIP, cPort]) + CRLF + CRLF;
+          line:= line + GetLineHeader + Format('%s:%d Read Request. (ID=%d)',
+           [cIP, cPort, Self.FThreadID]) + CRLF + CRLF;
           rcv:= '';
           size := -1;
           close := false;
@@ -1022,8 +1022,8 @@ begin
 
           if Terminated then Break;
 
-          line:= line + GetLineHeader + Format('%s:%d Sent Response.',
-           [cIP, cPort]) + CRLF + CRLF;
+          line:= line + GetLineHeader + Format('%s:%d Sent Response. (ID=%d)',
+           [cIP, cPort, Self.FThreadID]) + CRLF + CRLF;
 
           UniOutput:= False;
           Headers.Clear;
@@ -1072,7 +1072,8 @@ begin
       until Sock.LastError <> 0;
     finally
       s:= '';
-      if Sock.LastError <> 0 then s:= ', ' + Sock.LastErrorDesc;
+      if Sock.LastError <> 0 then
+        s:= Format(', %d:%s', [Sock.LastError, Sock.LastErrorDesc]);
       line:= GetLineHeader + Format('%s:%d Disconnected. (ID=%d%s)',
        [cIP, cPort, Self.FThreadID, s]) + CRLF + CRLF;
       Synchronize(@AddLog);
@@ -2293,7 +2294,7 @@ begin
           try
             cmd:= StringReplace(cmd, '$_in_$', ExtractShortPathNameUTF8(fname), [rfReplaceAll]);
             cmd:= StringReplace(cmd, '$_out_$', tmp_fname, [rfReplaceAll]);
-            if exec = 'mencoder' then begin
+            if Copy(exec, 1, 8) = 'mencoder' then begin
               if bTimeSeek then begin
                 if nseek1 <> 0 then begin
                   cmd := cmd + ' -ss ' + SeekTimeNum2Str(nseek1);
@@ -2308,7 +2309,7 @@ begin
                 end;
               end;
               cmd:= cmd + ' -quiet';
-            end else if exec = 'ffmpeg' then begin
+            end else if Copy(exec, 1, 6) = 'ffmpeg' then begin
               if bTimeSeek then begin
                 if (nseek2 > nseek1) then begin
                   cmd := ' -t ' + SeekTimeNum2Str(nseek2-nseek1) + ' ' + cmd;
@@ -2385,7 +2386,7 @@ begin
                   proc.Terminate(-1);
                 end;
                 if KeepMode = 1 then begin
-                  // 送信の優先度は低いので休みながらにして、変換作業を急がせる
+                  // 送信はどうでもよいことなので休みながらにして、変換作業を急がせる
                   SleepThread(Handle, 1000);
                 end;
               end;
@@ -2499,6 +2500,18 @@ begin
 end;
 
 procedure TSSDPDaemon.Execute;
+
+  procedure AddMulticast(const MCastIP, MyIP: string);
+  var
+    Multicast: TIP_mreq;
+  begin
+    FillChar(Multicast{%H-}, SizeOf(Multicast), 0);
+    Multicast.imr_multiaddr.S_addr := inet_addr(PChar(MCastIP));
+    Multicast.imr_interface.S_addr := inet_addr(PChar(MyIP));
+    Sock.SockCheck(synsock.SetSockOpt(Sock.Socket, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+      PAnsiChar(@Multicast), SizeOf(Multicast)));
+  end;
+
 var
   sendSock: TUDPBlockSocket;
   s, addr: String;
@@ -2507,11 +2520,11 @@ begin
   try
     Sock.CreateSocket();
     Sock.EnableReuse(True);
-    Sock.Bind('0.0.0.0', '1900'{SSDP});
-    if Sock.LastError <> 0 then Raise Exception.Create(Sock.LastErrorDesc);
-    Sock.AddMulticast('239.255.255.250');
-    if Sock.LastError <> 0 then Raise Exception.Create(Sock.LastErrorDesc);
     if MyIPAddr = '' then MyIPAddr:= Sock.ResolveName(Sock.LocalName);
+    Sock.Bind(MyIPAddr{'0.0.0.0'}, '1900'{SSDP});
+    if Sock.LastError <> 0 then Raise Exception.Create(Sock.LastErrorDesc);
+    AddMulticast('239.255.255.250', MyIPAddr);
+    if Sock.LastError <> 0 then Raise Exception.Create(Sock.LastErrorDesc);
     L:= lua_newstate(@alloc, nil);
     try
       InitLua(L);
@@ -2525,7 +2538,7 @@ begin
                 sendSock.Family:= SF_IP4;
                 sendSock.CreateSocket();
                 if sendSock.LastError <> 0 then Raise Exception.Create(sendSock.LastErrorDesc);
-                sendSock.Bind('0.0.0.0', '0');
+                sendSock.Bind(MyIPAddr{'0.0.0.0'}, '0');
                 if sendSock.LastError <> 0 then Raise Exception.Create(sendSock.LastErrorDesc);
                 addr:= Sock.GetRemoteSinIP;
                 if addr <> MyIPAddr then begin
@@ -2622,7 +2635,8 @@ procedure TMediaInfoCollector.Execute;
       try
         repeat
           if Terminated or (not prior and (PriorityList.Count > 0)) then Break;
-          if (info.Name <> '.') and (info.Name <> '..') then begin
+          if (info.Name <> '.') and (info.Name <> '..') and
+           (info.Attr and faHidden = 0) then begin
             if info.Attr and faDirectory <> 0 then begin
               if depth > 0 then begin
                 Dec(depth);
