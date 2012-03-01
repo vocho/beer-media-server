@@ -1,6 +1,5 @@
 {
 TODO
-  起動時直後の通信
 }
 unit Unit1;
 
@@ -15,7 +14,7 @@ uses
 const
   APP_NAME = 'BEER Media Server';
   SHORT_APP_NAME = 'BMS';
-  APP_VERSION = '1.2.120214';
+  APP_VERSION = '1.2.120301';
   SHORT_APP_VERSION = '1.2';
 
 type
@@ -45,7 +44,7 @@ procedure InitAfterApplicationInitialize;
 
 implementation
 uses
-  LCLIntf, blcksock, synsock, synautil, {synacode,}
+  LCLIntf, blcksock, synsock, synautil,
   DOM, XMLWrite, XMLRead, MediaInfoDll,
   Lua, lualib, lauxlib,
   {$IFDEF Win32}
@@ -118,7 +117,7 @@ type
     InputData, OutputData: TMemoryStream;
     UniOutput: boolean;
     InHeader: string;
-    constructor Create(hsock: TSocket);
+    constructor Create(hSock: TSocket);
     destructor Destroy; override;
     procedure Execute; override;
     function ProcessHttpRequest(const Request, URI: string): integer;
@@ -181,7 +180,7 @@ type
 var
   iniFile: TIniFile;
   ExecPath, TempPath, UUID, DAEMON_PORT: string;
-  MAX_REQUEST_COUNT: integer;
+  MAX_REQUEST_COUNT, SEND_DATA_TIMEOUT: integer;
   MyApp: TMyApp;
   thHttpDaemon: THttpDaemon;
   thSSDPDAemon: TSSDPDaemon;
@@ -309,7 +308,6 @@ begin
   try
     sock.Family:= SF_IP4;
     sock.CreateSocket();
-    if MyIPAddr = '' then MyIPAddr:= sock.ResolveName(sock.LocalName);
     sock.Bind(MyIPAddr{'0.0.0.0'}, '0');
     sock.MulticastTTL:= 1;
     sock.Connect('239.255.255.250', '1900'{SSDP});
@@ -403,7 +401,6 @@ begin
   try
     Sock.Family:= SF_IP4;
     sock.CreateSocket();
-    if MyIPAddr = '' then MyIPAddr:= sock.ResolveName(sock.LocalName);
     sock.Bind(MyIPAddr{'0.0.0.0'}, '0');
     sock.MulticastTTL:= 1;
     sock.Connect('239.255.255.250', '1900'{SSDP});
@@ -531,6 +528,8 @@ var
   mi: TMenuItem;
   i: integer;
   sl: TStringList;
+  sock: TBlockSocket;
+  s: String;
 begin
   UUID:= '';
   if FileExistsUTF8(ExecPath + 'UUID') then begin
@@ -562,6 +561,9 @@ begin
   Log:= TStringListUTF8.Create;
 
   MAX_REQUEST_COUNT:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'MAX_REQUEST_COUNT', 0);
+  SEND_DATA_TIMEOUT:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'SEND_DATA_TIMEOUT', 60*60);
+  if SEND_DATA_TIMEOUT > 0 then SEND_DATA_TIMEOUT:= SEND_DATA_TIMEOUT * 1000
+  else SEND_DATA_TIMEOUT:= MaxInt;
 
   MediaDirs:= TStringListUTF8.Create;
   iniFile.ReadSectionValues('MediaDirs', MediaDirs);
@@ -574,7 +576,7 @@ begin
       Inc(i);
   end;
   if MediaDirs.Count = 0 then begin
-    TrayIcon.BalloonHint:= '[MediaDirs]が未設定です。';
+    TrayIcon.BalloonHint:= 'ERROR: [MediaDirs]が未設定です。';
     TrayIcon.ShowBalloonHint;
   end;
 
@@ -586,11 +588,42 @@ begin
 
   thMIC:= TMediaInfoCollector.Create;
 
-  // Run HTTP Daemon
-  thHttpDaemon:= THttpDaemon.Create;
-  Sleep(1000); // 念のため
-  // Run SSDP Daemon
-  thSSDPDaemon:= TSSDPDaemon.Create;
+  sl:= TStringListUTF8.Create;
+  try
+    sock:= TBlockSocket.Create;
+    try
+      sock.Family:= SF_IP4;
+      sock.ResolveNameToIP(sock.LocalName, sl);
+      if sl.Count > 0 then begin
+        s:= iniFile.ReadString(INI_SEC_SYSTEM, 'IP_INTERFACE', '');
+        if s <> '' then begin
+          i:= StrToIntDef(s, 0);
+          if i > 0 then begin
+            if i <= sl.Count then
+              MyIPAddr:= sl[i-1];
+          end else if sl.IndexOf(s) >= 0 then
+            MyIPAddr:= s;
+        end;
+        if MyIPAddr = '' then
+          MyIPAddr:= sl[0];
+      end;
+    finally
+      sock.Free;
+    end;
+  finally
+    sl.Free;
+  end;
+
+  if MyIPAddr <> '' then begin
+    // Run HTTP Daemon
+    thHttpDaemon:= THttpDaemon.Create;
+    // Run SSDP Daemon
+    thSSDPDaemon:= TSSDPDaemon.Create;
+    //SendAlive;
+  end else begin
+    TrayIcon.BalloonHint:= 'ERROR: 自己 IP アドレスが取得できませんでした。';
+    TrayIcon.ShowBalloonHint;
+  end;
 
   PopupMenu:= TPopupMenu.Create(nil);
   mi:= TMenuItem.Create(nil);
@@ -607,8 +640,6 @@ begin
 
   TrayIcon.PopUpMenu := PopupMenu;
   TrayIcon.OnClick:= @MyApp.OnTrayIconClick;
-
-  SendAlive;
 end;
 
 destructor TMyApp.Destroy;
@@ -618,13 +649,13 @@ begin
   SendByebye;
   if Assigned(thSSDPDaemon) then begin
     thSSDPDaemon.Terminate;
-    thSSDPDaemon.Sock.CloseSocket;
+    //thSSDPDaemon.Sock.CloseSocket;
     thSSDPDaemon.WaitFor;
     FreeAndNil(thSSDPDaemon);
   end;
   if Assigned(thHttpDaemon) then begin
     thHttpDaemon.Terminate;
-    thHTTPDaemon.Sock.CloseSocket;
+    //thHTTPDaemon.Sock.CloseSocket;
     thHttpDaemon.WaitFor;
     FreeAndNil(thHttpDaemon);
   end;
@@ -776,7 +807,7 @@ begin
   for i:= 0 to th_list.Count-1 do begin
     th:= THttpThrd(th_list[i]);
     th.Terminate;
-    if Assigned(th.Sock) then th.Sock.CloseSocket;
+    if Assigned(th.Sock) then th.Sock.AbortSocket;
     th.WaitFor;
     th.Free;
   end;
@@ -794,7 +825,6 @@ procedure THttpDaemon.Execute;
     if Sock.LastError <> 0 then raise Exception.Create(Sock.LastErrorDesc);
     Sock.SetLinger(True, 10000);
     //Sock.EnableReuse(True);
-    if MyIPAddr = '' then MyIPAddr:= Sock.ResolveName(Sock.LocalName);
     Sock.Bind(MyIPAddr{'0.0.0.0'}, DAEMON_PORT); // ソケット登録
     if Sock.LastError <> 0 then raise Exception.Create(Sock.LastErrorDesc);
     Sock.Listen; // 接続準備
@@ -822,7 +852,7 @@ procedure THttpDaemon.Execute;
 var
   th: THttpThrd;
   ci: TClientInfo;
-  i, c, no_res_count: integer;
+  i, c: integer;
   s: string;
 begin
   try
@@ -830,7 +860,6 @@ begin
     InitSocket;
     SendAliveFlag:= True;
     c:= 0;
-    no_res_count:= 0;
     while not Terminated do begin
       if SendAliveFlag then begin
         Inc(c);
@@ -842,7 +871,6 @@ begin
       end;
 
       if Sock.CanRead(1000) then begin
-        no_res_count:= 0;
         if Sock.LastError = 0 then begin
           th:= THttpThrd.Create(Sock.Accept); // 接続待機
           th_list.Add(th);
@@ -854,18 +882,6 @@ begin
               c:= 0;
               SendAliveFlag:= False;
             end;
-          end;
-        end;
-      end else begin
-        Inc(no_res_count);
-        if no_res_count >= 60 then begin
-          no_res_count:= 0;
-          CleanThreadList;
-          if th_list.Count = 0 then begin
-            // 60秒間応答がなければソケットを初期化
-            Sock.Free;
-            Sock:= TTCPBlockSocket.Create;
-            InitSocket;
           end;
         end;
       end;
@@ -903,11 +919,11 @@ begin
   line:= '';
 end;
 
-constructor THttpThrd.Create(HSock: TSocket);
+constructor THttpThrd.Create(hSock: TSocket);
 begin
   Sock:= TTCPBlockSocket.Create;
   Sock.Family:= SF_IP4;
-  Sock.Socket:= HSock;
+  Sock.Socket:= hSock;
   FreeOnTerminate:= False;
   Priority:= tpNormal;
   inherited Create(False);
@@ -1177,22 +1193,20 @@ begin
         OutputData.LoadFromFile({UTF8FILENAME}UTF8ToSys(ExecPath + 'DATA/icon.png'));
         Result:= 200;
       end;
-    end else if Copy(uri, 1, 11) = '/playmedia/' then begin
+    end else if Copy(uri, 1, 4) = '/p1/' then begin
       if ClientInfo.ScriptFileName = '' then Exit;
       Headers.Clear;
 
-      //s:= DecodeTriplet(Copy(uri, 12, Length(uri)), '%');
-      s:= DecodeX(Copy(uri, 12, Length(uri)));
+      s:= DecodeX(Copy(uri, 5, MaxInt));
       if not FileExistsUTF8(s) then Exit;
       if not DoPlay(s, request) then Exit;
 
       Result:= 200;
-    end else if Copy(uri, 1, 12) = '/playmedia2/' then begin
+    end else if Copy(uri, 1, 4) = '/p2/' then begin
       if ClientInfo.ScriptFileName = '' then Exit;
       Headers.Clear;
 
-      //s:= DecodeTriplet(Copy(uri, 13, Length(uri)), '%');
-      s:= DecodeX(Copy(uri, 13, Length(uri)));
+      s:= DecodeX(Copy(uri, 5, MaxInt));
       i:= StrToInt(Fetch(s, #$09));
       if not FileExistsUTF8(s) then Exit;
       if not DoPlayTranscode(i, s, request) then Exit;
@@ -1720,9 +1734,7 @@ begin
            '<dc:title>' + StringReplace(s1, '&', '&amp;', [rfReplaceAll]) + '</dc:title>' +
            '<res xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/"'+
            m + '>' +
-           'http://' + MyIPAddr + ':' + DAEMON_PORT + '/playmedia2/' +
-           //EncodeTriplet(param, '%', URLSpecialChar + URLFullSpecialChar) +
-           EncodeX(param) +
+           'http://' + MyIPAddr + ':' + DAEMON_PORT + '/p2/' + EncodeX(param) +
            '</res>';
 
           s:= mi.Values['General;File_Created_Date_Local'];
@@ -1809,9 +1821,7 @@ begin
              '<dc:title>' + s + '</dc:title>' +
              '<res xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/"'+
              m + '>' +
-             'http://' + MyIPAddr + ':' + DAEMON_PORT + '/playmedia/' +
-             //EncodeTriplet(fn, '%', URLSpecialChar + URLFullSpecialChar) +
-             EncodeX(fn) +
+             'http://' + MyIPAddr + ':' + DAEMON_PORT + '/p1/' + EncodeX(fn) +
              '</res>';
 
             s:= mi.Values['General;File_Created_Date_Local'];
@@ -1964,20 +1974,24 @@ begin
 
       range1:= 0; range2:= fsize - 1;
       i:= Pos('RANGE:', UpperCase(InHeader));
-      bRange:= i > 0;
+      bRange:= not bTimeSeek and (i > 0);
       if bRange then begin
         s:= Copy(InHeader, i+6, Length(InHeader));
         Fetch(s, '=');
-        range1:= StrToInt64Def(Fetch(s, '-'), 0);
+        range1:= StrToInt64Def(Trim(Fetch(s, '-')), 0);
         iseek1:= range1;
         if now_rec then begin
           if iseek1 + OKKAKE_SPACE >= fsize then iseek1:= fsize - OKKAKE_SPACE;
         end;
-        range2:= StrToInt64Def(Fetch(s, CR), fsize-1);
+        range2:= StrToInt64Def(Trim(Fetch(s, CR)), fsize-1);
         isize:= range2 - range1 + 1;
       end;
 
-      h.Add('HTTP/1.1 200 OK');
+      if bRange then begin
+        h.Add('HTTP/1.1 206 Partial Content');
+      end else begin
+        h.Add('HTTP/1.1 200 OK');
+      end;
       h.Add('TransferMode.DLNA.ORG: Streaming');
       h.Add('Content-Type: ' + ct);
       h.Add('ContentFeatures.DLNA.ORG: ' + cf);
@@ -2024,6 +2038,7 @@ begin
           end;
         end;
 
+        Sock.SetSendTimeout(SEND_DATA_TIMEOUT);
         s_wait:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'STREAM_WAIT', 0);
         lua_getfield(L_S, LUA_GLOBALSINDEX, 'STREAM_WAIT');
         if lua_isnumber(L_S, -1) then s_wait:= lua_tointeger(L_S, -1);
@@ -2037,15 +2052,15 @@ begin
         buf_size:= buf_size * 1024 * 1024;
         buf:= GetMem(buf_size);
         try
-          fs.Position:= iseek1;
+          fs.Seek(iseek1, soBeginning);
           while (isize > 0) and not Terminated do begin
             if isize < buf_size then buf_size:= isize;
             i:= fs.Read(buf^, buf_size);
-            if i = 0 then begin
+            if i <= 0 then begin
               if now_rec then begin
                 SleepThread(Handle, 5000);
                 i:= fs.Read(buf^, buf_size);
-                if i = 0 then begin
+                if i <= 0 then begin
                   //Sock.SendString('0' + CRLF + CRLF);
                   SendRaw('0' + CRLF + CRLF);
                   Break; // 5秒待っても増えないのでたぶん録画終了
@@ -2173,12 +2188,12 @@ begin
 
     range1:= 0; range2:= -1;
     i:= Pos('RANGE:', UpperCase(InHeader));
-    bRange:= i > 0;
+    bRange:= not bTimeSeek and (i > 0);
     if bRange then begin
       s:= Copy(InHeader, i+6, Length(InHeader));
       Fetch(s, '=');
-      range1:= StrToInt64Def(Fetch(s, '-'), 0);
-      range2:= StrToInt64Def(Fetch(s, CR), -1);
+      range1:= StrToInt64Def(Trim(Fetch(s, '-')), 0);
+      range2:= StrToInt64Def(Trim(Fetch(s, CR)), -1);
     end;
 
     h.Add('HTTP/1.1 200 OK');
@@ -2218,6 +2233,7 @@ begin
       Line:= line + GetLineHeader + 'STREAM sent' + CRLF + fname + CRLF + CRLF;
       Synchronize(@AddLog);
 
+      Sock.SetSendTimeout(SEND_DATA_TIMEOUT);
       s_wait:= iniFile.ReadInteger(INI_SEC_SYSTEM, 'STREAM_WAIT', 0);
       lua_getfield(L_S, LUA_GLOBALSINDEX, 'STREAM_WAIT');
       if lua_isnumber(L_S, -1) then s_wait:= lua_tointeger(L_S, -1);
@@ -2500,18 +2516,6 @@ begin
 end;
 
 procedure TSSDPDaemon.Execute;
-
-  procedure AddMulticast(const MCastIP, MyIP: string);
-  var
-    Multicast: TIP_mreq;
-  begin
-    FillChar(Multicast{%H-}, SizeOf(Multicast), 0);
-    Multicast.imr_multiaddr.S_addr := inet_addr(PChar(MCastIP));
-    Multicast.imr_interface.S_addr := inet_addr(PChar(MyIP));
-    Sock.SockCheck(synsock.SetSockOpt(Sock.Socket, IPPROTO_IP, IP_ADD_MEMBERSHIP,
-      PAnsiChar(@Multicast), SizeOf(Multicast)));
-  end;
-
 var
   sendSock: TUDPBlockSocket;
   s, addr: String;
@@ -2520,17 +2524,16 @@ begin
   try
     Sock.CreateSocket();
     Sock.EnableReuse(True);
-    if MyIPAddr = '' then MyIPAddr:= Sock.ResolveName(Sock.LocalName);
     Sock.Bind(MyIPAddr{'0.0.0.0'}, '1900'{SSDP});
     if Sock.LastError <> 0 then Raise Exception.Create(Sock.LastErrorDesc);
-    AddMulticast('239.255.255.250', MyIPAddr);
+    Sock.AddMulticast('239.255.255.250', MyIPAddr);
     if Sock.LastError <> 0 then Raise Exception.Create(Sock.LastErrorDesc);
     L:= lua_newstate(@alloc, nil);
     try
       InitLua(L);
       while not Terminated do begin
         s:= Sock.RecvPacket(1000);
-        if Sock.LastError = 0 then  begin
+        if Sock.LastError = 0 then begin
           if Pos('M-SEARCH', s) = 1 then begin
             sendSock:= TUDPBlockSocket.Create;
             try

@@ -5,7 +5,8 @@ unit unit_mi1;
 interface
 
 uses
-  Classes, SysUtils, FileUtil, Forms, Controls, Graphics, Dialogs, StdCtrls;
+  Classes, SysUtils, FileUtil, Forms, Controls, Graphics, Dialogs,
+  StdCtrls;
 
 type
 
@@ -15,10 +16,11 @@ type
     Label1: TLabel;
     Memo1: TMemo;
     procedure FormCreate(Sender: TObject);
+    procedure FormDropFiles(Sender: TObject; const FileNames: array of String);
   private
     { private declarations }
     execpath: string;
-    procedure doCommand;
+    procedure DoCommand(const fname: string);
   public
     { public declarations }
   end; 
@@ -37,16 +39,22 @@ uses
 procedure TForm1.FormCreate(Sender: TObject);
 begin
   ExecPath:= ExtractFilePath(ParamStrUTF8(0));
-  if ParamCount > 0 then DoCommand;
+  if ParamCount > 0 then DoCommand(ParamStrUTF8(1));
 end;
 
-procedure TForm1.doCommand;
+procedure TForm1.FormDropFiles(
+ Sender: TObject; const FileNames: array of String);
+begin
+  DoCommand(FileNames[0]);
+end;
+
+procedure TForm1.DoCommand(const fname: string);
 var
   mi: integer;
   sl: TStringList;
   i: Integer;
 begin
-  Label1.Caption:= ParamStrUTF8(1);
+  Label1.Caption:= fname;
   Memo1.Clear;
   Memo1.Lines.BeginUpdate;
   try
@@ -54,7 +62,7 @@ begin
     try
       sl:= TStringList.Create;
       try
-        GetMediaInfo(ParamStrUTF8(1), mi, sl, ExecPath);
+        GetMediaInfo(fname, mi, sl, ExecPath);
         for i:= 0 to sl.Count-1 do begin
           sl[i]:=
            StringReplace(sl.Names[i], ';', '.', [rfReplaceAll, rfIgnoreCase]) +
