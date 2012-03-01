@@ -20,10 +20,11 @@ type
     SpinEdit1: TSpinEdit;
     procedure Button1Click(Sender: TObject);
     procedure FormCreate(Sender: TObject);
+    procedure FormDropFiles(Sender: TObject; const FileNames: array of String);
   private
     { private declarations }
-    execpath: string;
-    procedure doCommand(no: integer);
+    execpath, FileName: string;
+    procedure DoCommand(const fname:string; no: integer);
   public
     { public declarations }
   end; 
@@ -44,7 +45,14 @@ begin
   ExecPath:= ExtractFilePath(ParamStrUTF8(0));
   SpinEdit1.Value:= 1;
   Button1.Enabled:= ParamCount > 0;
-  if ParamCount > 0 then DoCommand(1);
+  if ParamCount > 0 then DoCommand(ParamStrUTF8(1), 1);
+end;
+
+procedure TForm1.FormDropFiles(Sender: TObject; const FileNames: array of String
+  );
+begin
+  DoCommand(FileNames[0], 1);
+  Button1.Enabled:= True;
 end;
 
 function DeleteEscapeSequence(const s: string): string;
@@ -62,12 +70,13 @@ begin
   end;
 end;
 
-procedure TForm1.doCommand(no: integer);
+procedure TForm1.DoCommand(const fname:string; no: integer);
 var
   cmd: string;
   ostream: TStringStream;
 begin
-  Label1.Caption:= ParamStrUTF8(1);
+  FileName:= fname;
+  Label1.Caption:= FileName;
   Memo1.Lines.BeginUpdate;
   try
     Memo1.Clear;
@@ -75,7 +84,7 @@ begin
     try
       cmd:= '"' + ExecPath + 'mplayer.exe"' +
        ' -speed 100 -vo null -ao null -frames 1 -identify' +
-       ' -dvd-device "' + ParamStrUTF8(1) + '" dvd://' + IntToStr(no);
+       ' -dvd-device "' + FileName + '" dvd://' + IntToStr(no);
       ExecCommand(cmd, nil, ostream, nil);
       //Memo1.Lines.Text:= DeleteEscapeSequence(ostream.DataString);
       Memo1.Lines.LoadFromStream(ostream);
@@ -89,7 +98,7 @@ end;
 
 procedure TForm1.Button1Click(Sender: TObject);
 begin
-  DoCommand(SpinEdit1.Value);
+  DoCommand(FileName, SpinEdit1.Value);
 end;
 
 end.

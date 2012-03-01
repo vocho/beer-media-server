@@ -67,7 +67,11 @@ begin
   Result:= '';
   i:= 1; l:= Length(s);
   while i <= l do begin
-    if s[i] in ['0'..'9', 'A'..'J', 'a'..'z', '.', '-', '!', '$', '(', ')'] then
+    if s[i] in ['/', '\'] then
+      Result:= Result + '/'
+    else if s[i] = ' ' then
+        Result:= Result + '?'
+    else if s[i] in ['0'..'9', 'A'..'J', 'a'..'z', '.', '-', '!', '$', '(', ')'] then
       Result:= Result + s[i]
     else
       Result:= Result +
@@ -87,7 +91,11 @@ begin
       Result:= Result +
        Char((Byte(s[i])-Byte('K')) shl 4 + Byte(s[i+1])-Byte('K'));
       Inc(i);
-    end else
+    end else if s[i] = '/' then
+      Result:= Result + DirectorySeparator
+    else if s[i] = '?' then
+      Result:= Result + ' '
+    else
       Result:= Result + s[i];
     Inc(i);
   end;

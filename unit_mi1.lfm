@@ -1,36 +1,42 @@
 object Form1: TForm1
   Left = 246
-  Height = 496
+  Height = 480
   Top = 150
-  Width = 582
+  Width = 640
+  AllowDropFiles = True
   Caption = 'MI'
-  ClientHeight = 496
-  ClientWidth = 582
+  ClientHeight = 480
+  ClientWidth = 640
   Font.Height = -16
   Font.Name = 'MS UI Gothic'
   OnCreate = FormCreate
+  OnDropFiles = FormDropFiles
+  Position = poDesktopCenter
   LCLVersion = '0.9.31'
   object Memo1: TMemo
+    AnchorSideTop.Control = Label1
+    AnchorSideTop.Side = asrBottom
     Left = 12
-    Height = 384
-    Top = 72
-    Width = 558
+    Height = 443
+    Top = 29
+    Width = 616
     Anchors = [akTop, akLeft, akRight, akBottom]
+    BorderSpacing.Top = 4
     Font.Height = -16
     Font.Name = 'MS UI Gothic'
     ParentFont = False
     ReadOnly = True
     ScrollBars = ssAutoBoth
     TabOrder = 0
+    WordWrap = False
   end
   object Label1: TLabel
     Left = 14
-    Height = 55
-    Top = 9
-    Width = 554
+    Height = 17
+    Top = 8
+    Width = 612
     Anchors = [akTop, akLeft, akRight]
-    AutoSize = False
-    Caption = 'MI "ファイル名" として実行してください。'#13#10'（MI.exe にファイルをドラッグ＆ドロップでもOK）'
+    Caption = 'ファイルをドラッグ＆ドロップしてください。'
     ParentColor = False
     WordWrap = True
   end
