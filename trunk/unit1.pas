@@ -14,7 +14,7 @@ uses
 const
   APP_NAME = 'BEER Media Server';
   SHORT_APP_NAME = 'BMS';
-  APP_VERSION = '1.2.120301';
+  APP_VERSION = '1.2.120510';
   SHORT_APP_VERSION = '1.2';
 
 type
@@ -2127,7 +2127,12 @@ begin
         ini.ReadSections(sl);
         ini.ReadSectionRaw(sl[sno], sl); // List index (sno) out of bounds エラーとなる可能性あり
         cmd:= StringReplace(sl.Text, CRLF, ' ', [rfReplaceAll]);
-        exec:= Trim(LowerCase(Fetch(cmd, ' ')));
+        if (cmd <> '') and (cmd[1] = '"') then begin
+          cmd:= Copy(cmd, 2, MaxInt);
+          exec:= Fetch(cmd, '"');
+        end else
+          exec:= Fetch(cmd, ' ');
+        exec:= Trim(LowerCase(exec));
         KeepMode:= 0;
         if (exec <> '') and (exec[1] = '*') then begin
           exec:= Copy(exec, 2, MaxInt);
@@ -2196,7 +2201,11 @@ begin
       range2:= StrToInt64Def(Trim(Fetch(s, CR)), -1);
     end;
 
-    h.Add('HTTP/1.1 200 OK');
+    if bRange then begin
+      h.Add('HTTP/1.1 206 Partial Content');
+    end else begin
+      h.Add('HTTP/1.1 200 OK');
+    end;
     h.Add('TransferMode.DLNA.ORG: Streaming');
     h.Add('Content-Type: ' + ct);
     h.Add('ContentFeatures.DLNA.ORG: ' + cf);
@@ -2346,7 +2355,10 @@ begin
             Line:= GetLineHeader + 'TRANSCODE ' + exec + CRLF + cmd + CRLF + CRLF;
             Synchronize(@AddLog);
 
-            proc.CommandLine:= '"' + ExecPath + exec + '" ' + cmd;
+            if ExtractFilePath(exec) = '' then
+              proc.CommandLine:= '"' + ExecPath + exec + '" ' + cmd
+            else
+              proc.CommandLine:= '"' + exec + '" ' + cmd;
             proc.Options:= [poNoConsole];
             proc.Execute;
             while proc.Running and not FileExistsUTF8(tmp_fname) do begin

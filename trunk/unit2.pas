@@ -430,11 +430,11 @@ begin
       sl.Add('General;Format=NowRecording');
       Exit;
     end;
-    if GetFileSize(fname) <= 0 then begin
-      sl.Add('General;Format=');
-      Exit;
-    end;
     try
+      if GetFileSize(fname) <= 0 then begin
+        sl.Add('General;Format=');
+        Exit;
+      end;
       //mi:= MediaInfo_New;
       //try
         if MediaInfo_Open(mi, PWideChar(UTF8Decode(fname))) <> 1 then Exit;
