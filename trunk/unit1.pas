@@ -14,7 +14,7 @@ uses
 const
   APP_NAME = 'BEER Media Server';
   SHORT_APP_NAME = 'BMS';
-  APP_VERSION = '1.2.120510';
+  APP_VERSION = '1.2.120522';
   SHORT_APP_VERSION = '1.2';
 
 type
