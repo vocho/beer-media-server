@@ -14,7 +14,7 @@ uses
 const
   APP_NAME = 'BEER Media Server';
   SHORT_APP_NAME = 'BMS';
-  APP_VERSION = '1.2.120522';
+  APP_VERSION = '1.2.120622';
   SHORT_APP_VERSION = '1.2';
 
 type
@@ -316,7 +316,7 @@ begin
       s:=
        'NOTIFY * HTTP/1.1' + CRLF +
        'HOST: 239.255.255.250:1900'+ CRLF +
-       'CACHE-CONTROL: max-age=2100'+ CRLF +
+       'CACHE-CONTROL: max-age=1800'+ CRLF +
        'LOCATION: http://' + MyIPAddr + ':' + DAEMON_PORT +
          '/desc.xml' + CRLF +
        'NT: upnp:rootdevice'+ CRLF +
@@ -330,7 +330,7 @@ begin
       s:=
        'NOTIFY * HTTP/1.1' + CRLF +
        'HOST: 239.255.255.250:1900'+ CRLF +
-       'CACHE-CONTROL: max-age=2100'+ CRLF +
+       'CACHE-CONTROL: max-age=1800'+ CRLF +
        'LOCATION: http://' + MyIPAddr + ':' + DAEMON_PORT +
          '/desc.xml' + CRLF +
        'NT: uuid:' + UUID + CRLF +
@@ -345,7 +345,7 @@ begin
       s:=
        'NOTIFY * HTTP/1.1' + CRLF +
        'HOST: 239.255.255.250:1900'+ CRLF +
-       'CACHE-CONTROL: max-age=2100'+ CRLF +
+       'CACHE-CONTROL: max-age=1800'+ CRLF +
        'LOCATION: http://' + MyIPAddr + ':' + DAEMON_PORT +
          '/desc.xml' + CRLF +
        'NT: urn:schemas-upnp-org:device:MediaServer:1' + CRLF +
@@ -360,7 +360,7 @@ begin
       s:=
        'NOTIFY * HTTP/1.1' + CRLF +
        'HOST: 239.255.255.250:1900'+ CRLF +
-       'CACHE-CONTROL: max-age=2100'+ CRLF +
+       'CACHE-CONTROL: max-age=1800'+ CRLF +
        'LOCATION: http://' + MyIPAddr + ':' + DAEMON_PORT +
          '/desc.xml' + CRLF +
        'NT: urn:schemas-upnp-org:service:ContentDirectory:1' + CRLF +
@@ -374,7 +374,7 @@ begin
       s:=
        'NOTIFY * HTTP/1.1' + CRLF +
        'HOST: 239.255.255.250:1900'+ CRLF +
-       'CACHE-CONTROL: max-age=2100'+ CRLF +
+       'CACHE-CONTROL: max-age=1800'+ CRLF +
        'LOCATION: http://' + MyIPAddr + ':' + DAEMON_PORT +
          '/desc.xml' + CRLF +
        'NT: urn:schemas-upnp-org:service:ConnectionManager:1' + CRLF +
@@ -783,7 +783,7 @@ begin
   end;
 end;
 
-{ TTCPHttpDaemon }
+{ THttpDaemon }
 
 procedure THttpDaemon.AddLog;
 begin
@@ -910,7 +910,7 @@ begin
   end;
 end;
 
-{ TTCPHttpThrd }
+{ THttpThrd }
 
 procedure THttpThrd.AddLog;
 begin
@@ -1113,14 +1113,14 @@ end;
 
 function THttpThrd.ProcessHttpRequest(const request, uri: string): integer;
 var
-  doc, doc2: TXMLDocument;
-  parent, item, val: TDOMNode;
+  docr, docw: TXMLDocument;
+  item, val: TDOMNode;
   s: string;
   i, c: integer;
 begin
   Result:= 404;
   if (request = 'GET') or (request = 'HEAD') then begin
-    if uri = '/desc.xml' then begin
+    if uri = '/desc.xml' then begin // UPnP Device description MediaServer
       Headers.Clear;
       Headers.Add('Content-Type: text/xml; charset="utf-8"');
       Headers.Add('Cache-Control: no-cache');
@@ -1129,39 +1129,44 @@ begin
 
       s:= ExecPath + 'data_user/desc.xml';
       if not FileExistsUTF8(s) then s:= ExecPath + 'data/desc.xml';
-      readXMLFile(doc, {UTF8FILENAME}UTF8ToSys(s));
+      readXMLFile(docw, {UTF8FILENAME}UTF8ToSys(s));
       try
-        item:= doc.DocumentElement.FindNode('URLBase');
-        if item = nil then Exit;
-        item.TextContent:= 'http://' +  MyIPAddr + ':' + DAEMON_PORT + '/';
+        with docw do begin
 
-        item:= doc.DocumentElement.FindNode('device');
-        if item = nil then Exit;
-        val:= item.FindNode('friendlyName');
-        if val = nil then Exit;
-        s:= iniFile.ReadString(INI_SEC_SYSTEM, 'SERVER_NAME', SHORT_APP_NAME + ' : %LOCALNAME%');
-        s:= StringReplace(s, '%LOCALNAME%', Sock.LocalName, [rfReplaceAll, rfIgnoreCase]);
-        val.TextContent:= UTF8Decode(s);
+          item:= DocumentElement.FindNode('URLBase');
+          if item = nil then Exit;
+          item.TextContent:= 'http://' +  MyIPAddr + ':' + DAEMON_PORT + '/';
 
-        val:= item.FindNode('UDN');
-        if val = nil then Exit;
-        val.TextContent:= 'uuid:' + UUID;
+          item:= DocumentElement.FindNode('device');
+          if item = nil then Exit;
+          with item do begin
+            val:= FindNode('friendlyName');
+            if val = nil then Exit;
+            s:= iniFile.ReadString(INI_SEC_SYSTEM, 'SERVER_NAME', SHORT_APP_NAME + ' : %LOCALNAME%');
+            s:= StringReplace(s, '%LOCALNAME%', Sock.LocalName, [rfReplaceAll, rfIgnoreCase]);
+            val.TextContent:= UTF8Decode(s);
 
-        {
-        val:= item.FindNode('presentationURL');
-        if val = nil then Exit;
-        val.TextContent:= 'http://' + MyIPAddr + ':' + DAEMON_PORT + '/index.html';
-        }
+            val:= FindNode('UDN');
+            if val = nil then Exit;
+            val.TextContent:= 'uuid:' + UUID;
 
-        writeXMLFile(doc, OutputData);
+            {
+            val:= FindNode('presentationURL');
+            if val = nil then Exit;
+            val.TextContent:= 'http://' + MyIPAddr + ':' + DAEMON_PORT + '/index.html';
+            }
+          end;
+        end;
+        writeXMLFile(docw, OutputData);
       finally
-        doc.Free;
+        docw.Free;
       end;
 
       Result:= 200;
-
     end else if (uri = '/UPnP_AV_ContentDirectory_1.0.xml') or
-     (uri = '/UPnP_AV_ConnectionManager_1.0.xml') then begin
+     (uri = '/UPnP_AV_ConnectionManager_1.0.xml') then begin // UPnP Service description
+      //<SCPDURL>/UPnP_AV_ContentDirectory_1.0.xml</SCPDURL>
+      //<SCPDURL>/UPnP_AV_ConnectionManager_1.0.xml</SCPDURL>
       Headers.Clear;
       Headers.Add('Content-Type: text/xml; charset="utf-8"');
       Headers.Add('Cache-Control: no-cache');
@@ -1170,15 +1175,14 @@ begin
 
       s:= ExecPath + 'data_user' + uri;
       if not FileExistsUTF8(s) then s:= ExecPath + 'data' + uri;
-      readXMLFile(doc, {UTF8FILENAME}UTF8ToSys(s));
+      readXMLFile(docw, {UTF8FILENAME}UTF8ToSys(s));
       try
-        writeXMLFile(doc, OutputData);
+        writeXMLFile(docw, OutputData);
       finally
-        doc.Free;
+        docw.Free;
       end;
 
       Result:= 200;
-
     end else if (uri = '/images/icon-256.png') then begin
       Headers.Clear;
       Headers.Add('Content-Type: image/png');
@@ -1193,126 +1197,168 @@ begin
         OutputData.LoadFromFile({UTF8FILENAME}UTF8ToSys(ExecPath + 'DATA/icon.png'));
         Result:= 200;
       end;
-    end else if Copy(uri, 1, 4) = '/p1/' then begin
+    end else if Pos('/p1/', uri) = 1 then begin
       if ClientInfo.ScriptFileName = '' then Exit;
       Headers.Clear;
 
-      s:= DecodeX(Copy(uri, 5, MaxInt));
+      s:= DecodeX(Copy(uri, Length('/p1/')+1, MaxInt));
       if not FileExistsUTF8(s) then Exit;
       if not DoPlay(s, request) then Exit;
 
       Result:= 200;
-    end else if Copy(uri, 1, 4) = '/p2/' then begin
+    end else if Pos('/p2/', uri) = 1 then begin
       if ClientInfo.ScriptFileName = '' then Exit;
       Headers.Clear;
 
-      s:= DecodeX(Copy(uri, 5, MaxInt));
+      s:= DecodeX(Copy(uri, Length('/p2/')+1, MaxInt));
       i:= StrToInt(Fetch(s, #$09));
       if not FileExistsUTF8(s) then Exit;
       if not DoPlayTranscode(i, s, request) then Exit;
 
       Result:= 200;
     end;
-
   end else if request = 'POST' then begin
     if ClientInfo.ScriptFileName = '' then Exit;
-    if uri = '/upnp/control/content_directory' then begin
+    if Pos('/upnp/control/', uri) = 1 then begin
+      //<controlURL>/upnp/control/content_directory</controlURL>
+      //<controlURL>/upnp/control/connection_manager</controlURL>
       Headers.Clear;
       Headers.Add('Content-Type: text/xml; charset="utf-8"');
 
-      doc:= TXMLDocument.Create;
-      readXMLFile(doc2, InputData);
+      docw:= TXMLDocument.Create;
+      readXMLFile(docr, InputData);
       try
-        //doc.Encoding:= 'utf-8';
-        item:= doc.CreateElement('s:Envelope');
-        TDOMElement(item).SetAttribute(
-         'xmlns:s', 'http://schemas.xmlsoap.org/soap/envelope/');
-        TDOMElement(item).SetAttribute(
-         's:encodingStyle', 'http://schemas.xmlsoap.org/soap/encoding/');
-        doc.AppendChild(item);
-
-        parent:= item; // >
-        item:= doc.CreateElement('s:Body');
-        parent.AppendChild(item);
-
-        val:= doc2.DocumentElement.FindNode('s:Body');
-        if val = nil then Exit;
-        s:= val.ChildNodes.Item[0].NodeName;
-
-        if s = 'u:GetSortCapabilities' then begin
-          parent:= item; // >
-          item:= doc.CreateElement('u:GetSortCapabilitiesResponse');
-          TDOMElement(item).SetAttribute(
-           'xmlns:u', 'urn:schemas-upnp-org:service:ContentDirectory:1');
-          parent.AppendChild(item);
-
-          parent:= item; // >
-          item:= doc.CreateElement('SortCaps');
-          parent.AppendChild(item);
-
-        end else if s = 'u:Browse' then begin
-          DoBrowse(doc2, doc);
+        with docw do begin
+          //Encoding:= 'utf-8';
+          with TDOMElement(AppendChild(CreateElement('s:Envelope'))) do begin
+            SetAttribute('xmlns:s', 'http://schemas.xmlsoap.org/soap/envelope/');
+            SetAttribute('s:encodingStyle', 'http://schemas.xmlsoap.org/soap/encoding/');
+            with TDOMElement(AppendChild(CreateElement('s:Body'))) do begin
+              if uri = '/upnp/control/content_directory' then begin
+                //SOAPACTION: "urn:schemas-upnp-org:service:ContentDirectory:1#GetSystemUpdateID"
+                //SOAPACTION: "urn:schemas-upnp-org:service:ContentDirectory:1#GetSearchCapabilities"
+                //SOAPACTION: "urn:schemas-upnp-org:service:ContentDirectory:1#GetSortCapabilities"
+                //SOAPACTION: "urn:schemas-upnp-org:service:ContentDirectory:1#Browse"
+                //SOAPACTION: "urn:schemas-upnp-org:service:ContentDirectory:1#Search"
+                val:= docr.DocumentElement.FindNode('s:Body');
+                if val = nil then Exit;
+                s:= val.ChildNodes.Item[0].NodeName;
+                if s = 'u:GetSystemUpdateID' then begin
+                  with TDOMElement(AppendChild(CreateElement(s+'Response'))) do begin
+                    SetAttribute('xmlns:u', 'urn:schemas-upnp-org:service:ContentDirectory:1');
+                    with TDOMElement(AppendChild(CreateElement('Id'))) do begin
+                      AppendChild(CreateTextNode('1'));
+                    end;
+                  end;
+                end else if s = 'u:GetSearchCapabilities' then begin
+                  with TDOMElement(AppendChild(CreateElement(s+'Response'))) do begin
+                    SetAttribute('xmlns:u', 'urn:schemas-upnp-org:service:ContentDirectory:1');
+                    AppendChild(CreateElement('SearchCaps'));
+                  end;
+                end else if s = 'u:GetSortCapabilities' then begin
+                  with TDOMElement(AppendChild(CreateElement(s+'Response'))) do begin
+                    SetAttribute('xmlns:u', 'urn:schemas-upnp-org:service:ContentDirectory:1');
+                    AppendChild(CreateElement('SortCaps'));
+                  end;
+                end else if s = 'u:Browse' then begin
+                  DoBrowse(docr, docw);
+                end else if s = 'u:Search' then begin
+                  DoBrowse(docr, docw);
+                end else begin
+                  Exit; // 未対応
+                end;
+              end else if uri = '/upnp/control/connection_manager' then begin
+                //SOAPACTION: "urn:schemas-upnp-org:service:ConnectionManager:1#GetCurrentConnectionInfo"
+                //SOAPACTION: "urn:schemas-upnp-org:service:ConnectionManager:1#ConnectionComplete"
+                //SOAPACTION: "urn:schemas-upnp-org:service:ConnectionManager:1#PrepareForConnection"
+                //SOAPACTION: "urn:schemas-upnp-org:service:ConnectionManager:1#GetProtocolInfo"
+                //SOAPACTION: "urn:schemas-upnp-org:service:ConnectionManager:1#GetCurrentConnectionIDs"
+                val:= docr.DocumentElement.FindNode('s:Body');
+                if val = nil then Exit;
+                s:= val.ChildNodes.Item[0].NodeName;
+                if s = 'u:GetCurrentConnectionInfo' then begin
+                  Exit; // 未実装
+                end else if s = 'u:ConnectionComplete' then begin
+                  Exit; // 未実装
+                end else if s = 'u:PrepareForConnection' then begin
+                  Exit; // 未実装
+                end else if s = 'u:GetProtocolInfo' then begin
+                  with TDOMElement(AppendChild(CreateElement(s+'Response'))) do begin
+                    SetAttribute('xmlns:u', 'urn:schemas-upnp-org:service:ConnectionManager:1');
+                    with TDOMElement(AppendChild(CreateElement('Source'))) do begin
+                      lua_getfield(L_S, LUA_GLOBALSINDEX, 'SUPPORT_MEDIA_LIST');
+                      c:= lua_objlen(L_S, -1);
+                      s:= '';
+                      for i:= 1 to c do begin
+                        lua_pushnumber(L_S, i);
+                        lua_gettable(L_S, -2);
+                        if s <> '' then s:= s + ',';
+                        s:= s + 'http-get:*:' + lua_tostring(L_S, -1);
+                        lua_pop(L_S, 1);
+                      end;
+                      AppendChild(CreateTextNode(s));
+                    end;
+                    AppendChild(CreateElement('Sink'));
+                  end;
+                end else if s = 'u:GetCurrentConnectionIDs' then begin
+                  Exit; // 未実装
+                end else begin
+                  Exit; // 未対応
+                end;
+              end;
+            end;
+          end;
         end;
-
-        writeXMLFile(doc, OutputData);
+        writeXMLFile(docw, OutputData);
       finally
-        doc.Free;
-        doc2.Free;
-      end;
-      Result:= 200;
-
-    end else if uri = '/upnp/control/connection_manager' then begin
-      Headers.Clear;
-      Headers.Add('Content-Type: text/xml; charset="utf-8"');
-
-      doc:= TXMLDocument.Create;
-      try
-        //doc.Encoding:= 'utf-8';
-        item:= doc.CreateElement('s:Envelope');
-        TDOMElement(item).SetAttribute(
-         'xmlns:s', 'http://schemas.xmlsoap.org/soap/envelope/');
-        TDOMElement(item).SetAttribute(
-         's:encodingStyle', 'http://schemas.xmlsoap.org/soap/encoding/');
-        doc.AppendChild(item);
-
-        parent:= item; // >
-        item:= doc.CreateElement('s:Body');
-        parent.AppendChild(item);
-
-        parent:= item; // >
-        item:= doc.CreateElement('u:GetProtocolInfoResponse');
-        TDOMElement(item).SetAttribute(
-         'xmlns:u', 'urn:schemas-upnp-org:service:ConnectionManager:1');
-        parent.AppendChild(item);
-
-        parent:= item; // >
-        item:= doc.CreateElement('Source');
-        parent.AppendChild(item);
-
-        lua_getfield(L_S, LUA_GLOBALSINDEX, 'SUPPORT_MEDIA_LIST');
-        c:= lua_objlen(L_S, -1);
-        s:= '';
-        for i:= 1 to c do begin
-          lua_pushnumber(L_S, i);
-          lua_gettable(L_S, -2);
-          if s <> '' then s:= s + ',';
-          s:= s + 'http-get:*:' + lua_tostring(L_S, -1);
-          lua_pop(L_S, 1);
-        end;
-        val:= doc.CreateTextNode(s);
-        item.AppendChild(val);
-
-        item:= doc.CreateElement('Sink');
-        parent.AppendChild(item);
-
-        writeXMLFile(doc, OutputData);
-      finally
-        doc.Free;
+        docw.Free;
+        docr.Free;
       end;
 
       Result:= 200;
-
     end;
+  end else if request = 'SUBSCRIBE' then begin
+    Headers.Clear;
+    Headers.Add('SID: uuid:' + UUID);
+    Headers.Add('TIMEOUT: Second-300');
+
+    Result:= 200;
+  end else if request = 'UNSUBSCRIBE' then begin
+    Headers.Clear;
+
+    Result:= 200;
+  end else if request = 'NOTIFY' then begin
+    Headers.Clear;
+    Headers.Add('Content-Type: text/xml; charset="utf-8"');
+    Headers.Add('NT: upnp:event');
+    Headers.Add('NTS: upnp:propchange');
+    Headers.Add('SID: uuid:' + UUID);
+    Headers.Add('SEQ: 0');
+
+    docw:= TXMLDocument.Create;
+    try
+      with docw do begin
+        with TDOMElement(AppendChild(CreateElement('e:propertyset'))) do begin
+          SetAttribute('xmlns:e', 'urn:schemas-upnp-org:event-1-0');
+          with TDOMElement(AppendChild(CreateElement('e:property'))) do begin
+            AppendChild(CreateElement('TransferIDs'));
+          end;
+          with TDOMElement(AppendChild(CreateElement('e:property'))) do begin
+            AppendChild(CreateElement('ContainerUpdateIDs'));
+          end;
+          with TDOMElement(AppendChild(CreateElement('e:property'))) do begin
+            with TDOMElement(AppendChild(CreateElement('SystemUpdateID'))) do begin
+              AppendChild(CreateTextNode('1'));
+            end;
+          end;
+        end;
+      end;
+      writeXMLFile(docw, OutputData);
+    finally
+      docw.Free;
+    end;
+
+    Result:= 200;
   end;
 end;
 
@@ -1452,11 +1498,13 @@ var
               if info.Attr and faDirectory <> 0 then begin
                 sl.Add(#2 + dir + info.Name + DirectorySeparator);
               end else begin
-                s:= LowerCase(ExtractFileExt(info.Name));
-                if (s = '.m3u') or (s = '.m3u8') then begin
-                  sl.Add(#3 + dir + info.Name);
-                end else if (s <> '.lua') and (s <> '.txt') then begin
-                  sl.Add(#$F + dir + info.Name);
+                if info.Size > 0 then begin
+                  s:= LowerCase(ExtractFileExt(info.Name));
+                  if (s = '.m3u') or (s = '.m3u8') then begin
+                    sl.Add(#3 + dir + info.Name);
+                  end else if (s <> '.lua') and (s <> '.txt') then begin
+                    sl.Add(#$F + dir + info.Name);
+                  end;
                 end;
               end;
             end;
@@ -1688,10 +1736,11 @@ begin
         if fn[1] <> #1 then
           s:= ExtractFileName(ExcludeTrailingPathDelimiter(s));
         s:= StringReplace(s, '&', '&amp;', [rfReplaceAll]);
+        s:= StringReplace(s, '''', '&apos;', [rfReplaceAll]);
         s:= '&lt; ' + s + ' &gt;';
         r:= r +
-         '<container id="' + id + '$' + IntToStr(i) + '" childCount="0"' +
-         ' parentID="' + id + '" restricted="true">' +
+         '<container id="' + id + '$' + IntToStr(i) + '" childCount="1"' +
+         ' parentID="' + id + '" restricted="1">' +
          '<dc:title>' + s + '</dc:title><dc:date>0000-00-00T00:00:00</dc:date>'+
          '<upnp:class>object.container.storageFolder</upnp:class>'+
          '</container>';
@@ -1728,10 +1777,15 @@ begin
           if dur <> '' then
             m:= m + ' duration="' + dur + '"';
 
+          s1:= StringReplace(s1, '&', '&amp;', [rfReplaceAll]);
+          s1:= StringReplace(s1, '<', '&lt;', [rfReplaceAll]);
+          s1:= StringReplace(s1, '>', '&gt;', [rfReplaceAll]);
+          s1:= StringReplace(s1, '''', '&apos;', [rfReplaceAll]);
+
           r:= r +
            '<item id="' + id + '$' + IntToStr(i) + '"' +
-           ' parentID="' + id + '" restricted="true">' +
-           '<dc:title>' + StringReplace(s1, '&', '&amp;', [rfReplaceAll]) + '</dc:title>' +
+           ' parentID="' + id + '" restricted="1">' +
+           '<dc:title>' + s1 + '</dc:title>' +
            '<res xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/"'+
            m + '>' +
            'http://' + MyIPAddr + ':' + DAEMON_PORT + '/p2/' + EncodeX(param) +
@@ -1765,10 +1819,11 @@ begin
           s:= Copy(fn, 1, Length(fn)-1);
           s:= ExtractFileName(ExcludeTrailingPathDelimiter(s));
           s:= StringReplace(s, '&', '&amp;', [rfReplaceAll]);
+          s:= StringReplace(s, '''', '&apos;', [rfReplaceAll]);
           s:= '/ ' + s;
           r:= r +
-           '<container id="' + id + '$' + IntToStr(i) + '" childCount="0"' +
-           ' parentID="' + id + '" restricted="true">' +
+           '<container id="' + id + '$' + IntToStr(i) + '" childCount="1"' +
+           ' parentID="' + id + '" restricted="1">' +
            '<dc:title>' + s + '</dc:title><dc:date>0000-00-00T00:00:00</dc:date>'+
            '<upnp:class>object.container.storageFolder</upnp:class>'+
            '</container>';
@@ -1812,12 +1867,13 @@ begin
 
             s:= ExtractFileName(fn);
             s:= StringReplace(s, '&', '&amp;', [rfReplaceAll]);
+            s:= StringReplace(s, '''', '&apos;', [rfReplaceAll]);
             if mi.Values['General;Format'] = 'NowRecording' then begin
               s:= '* ' + s;
             end;
             r:= r +
              '<item id="' + id + '$' + IntToStr(i) + '"' +
-             ' parentID="' + id + '" restricted="true">' +
+             ' parentID="' + id + '" restricted="1">' +
              '<dc:title>' + s + '</dc:title>' +
              '<res xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/"'+
              m + '>' +
@@ -2099,7 +2155,8 @@ end;
 function THttpThrd.DoPlayTranscode(sno: integer; const fname, request: string): boolean;
 var
   mi: TGetMediaInfo;
-  cmd, exec, tmp_fname, ct, cf, s, seek1, seek2, dur, ts_range, range: string;
+  cmd, exec, tmp_fname, ct, cf, seek1, seek2, dur, ts_range, range: string;
+  s, s1, s2: string;
   fs: TFileStreamUTF8;
   h, sl: TStringListUTF8;
   i, buf_size, errc, s_wait: integer;
@@ -2361,29 +2418,43 @@ begin
               proc.CommandLine:= '"' + exec + '" ' + cmd;
             proc.Options:= [poNoConsole];
             proc.Execute;
-            while proc.Running and not FileExistsUTF8(tmp_fname) do begin
+
+            while not Terminated and proc.Running and
+             not FileExistsUTF8(tmp_fname) do begin
               SleepThread(Handle, 100);
             end;
+
+            if Terminated then Exit;
 
             if not FileExistsUTF8(tmp_fname) then begin
               // エラーメッセージを取得するためもう一度実行
               proc.Options:= [poUsePipes, poNoConsole];
               proc.Execute;
-              while proc.Running do begin
-                i:= proc.Output.Read(buf^, 1024);
+              s1:= ''; s2:= '';
+              while not Terminated do begin
+                i:= proc.Output.NumBytesAvailable;
                 if i > 0 then begin
-                  buf[i]:= 0;
-                  line := line + StrPas(PChar(buf));
-                  if Length(line) > 1024 then Synchronize(@AddLog);
-                end else begin
-                  SleepThread(Handle, 100);
+                  SetLength(s, i);
+                  i:= proc.output.Read(s[1], i);
+                  SetLength(s, i);
+                  s1 := s1 + s;
                 end;
+                i:= proc.Stderr.NumBytesAvailable;
+                if i > 0 then begin
+                  SetLength(s, i);
+                  i:= proc.stderr.Read(s[1], i);
+                  SetLength(s, i);
+                  s2 := s2 + s;
+                end;
+                if not proc.Running and (proc.Output.NumBytesAvailable = 0) and
+                 (proc.Stderr.NumBytesAvailable = 0) then Break;
               end;
-              while True do begin
-                i:= proc.Output.Read(buf^, 1024);
-                if i <= 0 then Break;
-                buf[i]:= 0;
-                line := StrPas(PChar(buf));
+              if s1 <> '' then begin
+                line:= 'Output: ' + CRLF + s1 + CRLF;
+                Synchronize(@AddLog);
+              end;
+              if s2 <> '' then begin
+                line:= 'Error: ' + CRLF + s2 + CRLF;
                 Synchronize(@AddLog);
               end;
               Exit;
@@ -2528,25 +2599,52 @@ begin
 end;
 
 procedure TSSDPDaemon.Execute;
+
+  procedure AddMulticast7(const MCastIP: AnsiString; const Intf: AnsiString);
+  var
+    Multicast: TIP_mreq;
+  begin
+    Multicast.imr_multiaddr.S_addr := synsock.inet_addr(PAnsiChar(MCastIP));
+    Multicast.imr_interface.S_addr := INADDR_ANY;
+    if Intf <> '' then // Windows7ではINADDR_ANYのままだと不具合が出る場合があるのでIntfの指定は必須
+      Multicast.imr_interface.S_addr := synsock.inet_addr(PAnsiChar(Intf));
+    Sock.SockCheck(synsock.SetSockOpt(Sock.Socket, IPPROTO_IP,
+     IP_ADD_MEMBERSHIP, PAnsiChar(@Multicast), SizeOf(Multicast)));
+    Sock.ExceptCheck;
+  end;
+
 var
   sendSock: TUDPBlockSocket;
-  s, addr: String;
-  L: Plua_State;
+  s, st, rcv_st, usn, remoteip, remoteport: String; // st:ServiceType
+  //L: Plua_State; // Luaで拡張できるようにする予定だったが・・・なくてもよさげ
+  st_list: TStringList; // st_list:ServiceTypeList
 begin
   try
     Sock.CreateSocket();
     Sock.EnableReuse(True);
     Sock.Bind(MyIPAddr{'0.0.0.0'}, '1900'{SSDP});
     if Sock.LastError <> 0 then Raise Exception.Create(Sock.LastErrorDesc);
-    Sock.AddMulticast('239.255.255.250', MyIPAddr);
+    AddMulticast7('239.255.255.250', MyIPAddr);
     if Sock.LastError <> 0 then Raise Exception.Create(Sock.LastErrorDesc);
-    L:= lua_newstate(@alloc, nil);
+    //L:= lua_newstate(@alloc, nil);
+    st_list:= TStringListUTF8.Create;
     try
-      InitLua(L);
+      //InitLua(L);
+      st_list.Add('upnp:rootdevice');
+      st_list.Add('uuid:' + UUID);
+      st_list.Add('urn:schemas-upnp-org:device:MediaServer:1');
+      st_list.Add('urn:schemas-upnp-org:service:ContentDirectory:1');
+      st_list.Add('urn:schemas-upnp-org:service:ConnectionManager:1');
       while not Terminated do begin
         s:= Sock.RecvPacket(1000);
         if Sock.LastError = 0 then begin
           if Pos('M-SEARCH', s) = 1 then begin
+            remoteip:= Sock.GetRemoteSinIP;
+            remoteport:= IntToStr(Sock.GetRemoteSinPort);
+            rcv_st:= '';
+            if Pos(LF+'ST:', s) > 0 then begin
+              rcv_st:= SeparateLeft(SeparateRight(s, LF+'ST:'), CR);
+            end;
             sendSock:= TUDPBlockSocket.Create;
             try
               try
@@ -2555,29 +2653,32 @@ begin
                 if sendSock.LastError <> 0 then Raise Exception.Create(sendSock.LastErrorDesc);
                 sendSock.Bind(MyIPAddr{'0.0.0.0'}, '0');
                 if sendSock.LastError <> 0 then Raise Exception.Create(sendSock.LastErrorDesc);
-                addr:= Sock.GetRemoteSinIP;
-                if addr <> MyIPAddr then begin
-                  sendSock.Connect(addr, IntToStr(Sock.GetRemoteSinPort));
+                if remoteip <> MyIPAddr then begin
+                  sendSock.Connect(remoteip, remoteport);
                   if sendSock.LastError <> 0 then Raise Exception.Create(sendSock.LastErrorDesc);
-                  s:=
-                   'HTTP/1.1 200 OK' + CRLF +
-                   'CACHE-CONTROL: max-age=2100' + CRLF +
-                   'DATE: ' + Rfc822DateTime(now) + CRLF +
-                   'LOCATION: http://' + MyIPAddr + ':' + DAEMON_PORT +
-                     '/desc.xml' + CRLF +
-                   'SERVER: ' + HTTP_HEAD_SERVER + CRLF +
-                   //'ST: upnp:rootdevice'+ CRLF +
-                   'ST: urn:schemas-upnp-org:device:MediaServer:1' + CRLF +
-                   'EXT: '+ CRLF +
-                   //'USN: uuid:' + clsid + '::upnp:rootdevice' + CRLF +
-                   'USN: uuid:' + UUID + '::urn:schemas-upnp-org:device:MediaServer:1' + CRLF +
-                   'Content-Length: 0' +
-                   CRLF + CRLF;
-
-                  sendSock.SendString(s);
-                  if sendSock.LastError <> 0 then Raise Exception.Create(sendSock.LastErrorDesc);
-                  line:= GetLineHeader + addr + '  SSDP Sent for M-SEARCH' + CRLF + CRLF;
-                  Synchronize(@AddLog);
+                  for st in st_list do begin
+                    if (Pos('ssdp:all', rcv_st) > 0) or (Pos(st, rcv_st) > 0) or (st = 'urn:schemas-upnp-org:device:MediaServer:1') then begin
+                      if st = ('uuid:' + UUID) then begin
+                        usn:= st;
+                      end else begin
+                        usn:= 'uuid:' + UUID + '::' + st;
+                      end;
+                      s:=
+                       'HTTP/1.1 200 OK' + CRLF +
+                       'CACHE-CONTROL: max-age=1800' + CRLF +
+                       'DATE: ' + Rfc822DateTime(now) + CRLF +
+                       'LOCATION: http://' + MyIPAddr + ':' + DAEMON_PORT + '/desc.xml' + CRLF +
+                       'SERVER: ' + HTTP_HEAD_SERVER + CRLF +
+                       'ST: ' + st + CRLF +
+                       'EXT: '+ CRLF +
+                       'USN: ' + usn + CRLF +
+                       'Content-Length: 0' + CRLF + CRLF;
+                      sendSock.SendString(s);
+                      if sendSock.LastError <> 0 then Raise Exception.Create(sendSock.LastErrorDesc);
+                      line:= GetLineHeader + remoteip + '  SSDP Sent for M-SEARCH' + CRLF + CRLF;
+                      Synchronize(@AddLog);
+                    end;
+                  end;
                 end;
               except
                 on e: Exception do begin
@@ -2597,7 +2698,8 @@ begin
         end;
       end;
     finally
-      lua_close(L);
+      st_list.Free;
+      //lua_close(L);
     end;
   except
     on e: Exception do begin
