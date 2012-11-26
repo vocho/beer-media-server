@@ -2,7 +2,7 @@
 
 = 準備 =
 
- Panasonic ビエラ・ワンセグ SV-ME970 用スクリプトを使用するには、libfaac.dll が必要になる場合があります（使用する mencoder.exe のビルド方法によります）。<br>必要な場合には、http://oss.netfarm.it/mplayer-win32.php などからダウンロードして、BMS.exe と同じフォルダに配置してください。
+ Panasonic ビエラ・ワンセグ SV-ME970 用スクリプトを使用するには、libfaac.dll が必要になる場合があります（使用する mencoder.exe のビルド方法によります）。<br>必要な場合には、libfaac.dllを入手して、BMS.exe と同じフォルダに配置してください。
 
 = 再生できるファイル =
 
